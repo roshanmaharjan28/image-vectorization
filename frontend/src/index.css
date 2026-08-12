@@ -1,0 +1,35 @@
+:root {
+  --bg-app: #1e1e22;
+  --bg-panel: #26262b;
+  --bg-canvas: #3a3a40;
+  --border: #3f3f46;
+  --text: #e4e4e7;
+  --text-dim: #9a9aa2;
+  --accent: #4f8cff;
+  --accent-hover: #6ba0ff;
+  --danger: #ff6b6b;
+
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg-app);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+}
+
+button {
+  font: inherit;
+}
