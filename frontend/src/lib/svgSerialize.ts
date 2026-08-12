@@ -13,7 +13,6 @@ function attrsToString(attrs: Record<string, string>): string {
 interface MarkupOptions {
   /** Tags the path with data-layer-id so canvas hover can be resolved back to a layer. */
   interactive?: boolean;
-  highlighted?: boolean;
 }
 
 /** Renders a layer's original SVG attributes verbatim (d, fill, transform, fill-rule, etc.). */
@@ -22,14 +21,14 @@ export function layerToPathMarkup(layer: Layer, options?: MarkupOptions): string
   if (options?.interactive) {
     overrides['data-layer-id'] = layer.id;
   }
-  if (options?.highlighted) {
-    overrides['stroke'] = '#4dabf7';
-    overrides['stroke-width'] = '3';
-    overrides['stroke-opacity'] = '0.9';
-    overrides['vector-effect'] = 'non-scaling-stroke';
-  }
   const attrs = { ...layer.attrs, ...overrides };
   return `<path ${attrsToString(attrs)} />`;
+}
+
+/** CSS rule that highlights a single layer by id, for use inside an inline <style> tag. */
+export function layerHighlightRule(layerId: string): string {
+  const selector = `path[data-layer-id="${layerId.replace(/"/g, '')}"]`;
+  return `${selector}{stroke:#4dabf7;stroke-width:3;stroke-opacity:.9;vector-effect:non-scaling-stroke;}`;
 }
 
 /** Serializes only visible layers, so hidden layers are excluded from the export. */

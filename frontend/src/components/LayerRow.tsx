@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { Layer, SvgMeta } from '../types';
 import { layerToPathMarkup } from '../lib/svgSerialize';
 
@@ -13,7 +13,7 @@ interface Props {
   onHover: (id: string | null) => void;
 }
 
-export function LayerRow({
+export const LayerRow = memo(function LayerRow({
   layer,
   index,
   meta,
@@ -23,7 +23,6 @@ export function LayerRow({
   onDelete,
   onHover,
 }: Props) {
-  const rowRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<SVGSVGElement>(null);
   const [thumbViewBox, setThumbViewBox] = useState<string | null>(null);
 
@@ -44,13 +43,8 @@ export function LayerRow({
     }
   }, [layer, meta]);
 
-  useEffect(() => {
-    if (isSelected) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [isSelected]);
-
   return (
     <div
-      ref={rowRef}
       className={`layer-row${layer.visible ? '' : ' layer-row--hidden'}${isHovered ? ' layer-row--hovered' : ''}${isSelected ? ' layer-row--selected' : ''}`}
       onMouseEnter={() => onHover(layer.id)}
       onMouseLeave={() => onHover(null)}
@@ -85,4 +79,4 @@ export function LayerRow({
       </button>
     </div>
   );
-}
+});

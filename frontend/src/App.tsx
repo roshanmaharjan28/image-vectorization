@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { UploadDropzone } from './components/UploadDropzone';
 import { Toolbar } from './components/Toolbar';
 import { Canvas } from './components/Canvas';
@@ -36,7 +36,8 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
-      const res = await fetch('/api/vectorize', { method: 'POST', body: formData });
+      const apiUrl = import.meta.env.VITE_API_URL ?? '';
+      const res = await fetch(`${apiUrl}/api/vectorize`, { method: 'POST', body: formData });
 
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -54,13 +55,13 @@ function App() {
     }
   }
 
-  function handleToggleVisible(id: string) {
+  const handleToggleVisible = useCallback((id: string) => {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
-  }
+  }, []);
 
-  function handleDeleteLayer(id: string) {
+  const handleDeleteLayer = useCallback((id: string) => {
     setLayers((prev) => prev.filter((l) => l.id !== id));
-  }
+  }, []);
 
   function handleDownload() {
     if (!meta) return;

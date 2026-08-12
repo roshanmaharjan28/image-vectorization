@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { MouseEvent, WheelEvent } from 'react';
 import type { Layer, SvgMeta } from '../types';
-import { layerToPathMarkup } from '../lib/svgSerialize';
+import { layerHighlightRule, layerToPathMarkup } from '../lib/svgSerialize';
 
 interface Props {
   imageUrl: string | null;
@@ -65,6 +65,23 @@ export function Canvas({
 
   const isVectorized = meta !== null;
 
+  // Rebuilding path markup for every layer is O(n) in layer count, so it must
+  // stay keyed only on `layers` — not on pan/zoom/hover state, which change far
+  // more often and would otherwise force a full path-list rebuild on every event.
+  const pathsMarkup = useMemo(
+    () =>
+      layers
+        .filter((layer) => layer.visible)
+        .map((layer) => layerToPathMarkup(layer, { interactive: true }))
+        .join(''),
+    [layers],
+  );
+
+  const highlightCss = useMemo(() => {
+    const ids = new Set([hoveredLayerId, selectedLayerId].filter((id): id is string => id !== null));
+    return [...ids].map(layerHighlightRule).join('');
+  }, [hoveredLayerId, selectedLayerId]);
+
   return (
     <div
       className="canvas"
@@ -91,18 +108,10 @@ export function Canvas({
               onMouseOut={handlePathMouseOut}
               onMouseLeave={() => onHoverLayer(null)}
               onClick={handlePathClick}
-              dangerouslySetInnerHTML={{
-                __html: layers
-                  .filter((layer) => layer.visible)
-                  .map((layer) =>
-                    layerToPathMarkup(layer, {
-                      interactive: true,
-                      highlighted: layer.id === hoveredLayerId || layer.id === selectedLayerId,
-                    }),
-                  )
-                  .join(''),
-              }}
-            />
+            >
+              <style>{highlightCss}</style>
+              <g dangerouslySetInnerHTML={{ __html: pathsMarkup }} />
+            </svg>
           ) : (
             imageUrl && <img src={imageUrl} alt="Uploaded artwork" className="canvas__surface canvas__image" />
           )}

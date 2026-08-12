@@ -1,14 +1,23 @@
 import os
 
 import vtracer
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+load_dotenv()
+
 app = FastAPI(title="Image Vectorization API")
+
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,7 +44,14 @@ def vectorize(image: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        svg = vtracer.convert_raw_image_to_svg(img_bytes, img_format=img_format)
+        svg = vtracer.convert_raw_image_to_svg(
+            img_bytes,
+            img_format=img_format,
+            mode="spline",
+            filter_speckle=0,
+            color_precision=8,
+            layer_difference=18,
+        )
     except Exception as exc:  # vtracer raises plain exceptions on decode/trace failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc
 

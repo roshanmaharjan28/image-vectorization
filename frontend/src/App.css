@@ -159,6 +159,7 @@
 .layers-panel__list {
   overflow-y: auto;
   flex: 1;
+  position: relative;
 }
 
 .layers-panel__empty {
@@ -168,12 +169,25 @@
   line-height: 1.5;
 }
 
+.layers-panel__scroller {
+  position: relative;
+}
+
+.layers-panel__row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+}
+
 .layer-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  height: 100%;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
 }
 
 .layer-row--hidden {
