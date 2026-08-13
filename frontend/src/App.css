@@ -1,7 +1,60 @@
-.app {
+.app-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+.app-shell__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.app-shell__body > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.version-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0 16px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.version-nav__brand {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  margin-right: 12px;
+}
+
+.version-nav__link {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.version-nav__link:hover {
+  color: var(--text);
+}
+
+.version-nav__link--active {
+  background: var(--accent);
+  color: white;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .app--empty {

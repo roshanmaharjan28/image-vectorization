@@ -3,3 +3,6 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 vtracer
+numpy
+opencv-python-headless
+Pillow

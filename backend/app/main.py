@@ -5,9 +5,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.v2.router import router as v2_router
+from app.v3.router import router as v3_router
+
 load_dotenv()
 
 app = FastAPI(title="Image Vectorization API")
+app.include_router(v2_router, prefix="/api/v2")
+app.include_router(v3_router, prefix="/api/v3")
 
 cors_origins = [
     origin.strip()
