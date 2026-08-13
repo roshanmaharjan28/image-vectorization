@@ -3,13 +3,14 @@ import { UploadDropzone } from '../components/UploadDropzone';
 import { Toolbar } from '../components/Toolbar';
 // Canvas.tsx (SVG/DOM renderer) is kept around, just swapped out here — CanvasGL.tsx is an
 // experimental WebGL2 renderer, see its file header for how it differs.
-import { Canvas } from '../components/Canvas';
+// import { Canvas } from '../components/Canvas';
 // import { CanvasGL } from '../components/CanvasGL';
 import { LayersPanel } from '../components/LayersPanel';
 import { parseSvgToLayers } from '../lib/svgParse';
 import { buildSvgString } from '../lib/svgSerialize';
 import type { Layer, Stage, SvgMeta } from '../types';
 import '../App.css';
+import { CanvasGL } from '../components/CanvasGL';
 
 interface VectorizerPageProps {
   apiEndpoint: string;
@@ -113,7 +114,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
         onReset={handleReset}
       />
       <div className="app__body">
-        <Canvas
+        <CanvasGL
           imageUrl={imageUrl}
           meta={meta}
           layers={layers}

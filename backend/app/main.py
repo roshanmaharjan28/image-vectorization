@@ -6,13 +6,11 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.v2.router import router as v2_router
-from app.v3.router import router as v3_router
 
 load_dotenv()
 
 app = FastAPI(title="Image Vectorization API")
 app.include_router(v2_router, prefix="/api/v2")
-app.include_router(v3_router, prefix="/api/v3")
 
 cors_origins = [
     origin.strip()
@@ -52,10 +50,10 @@ def vectorize(image: UploadFile = File(...)):
         svg = vtracer.convert_raw_image_to_svg(
             img_bytes,
             img_format=img_format,
-            mode="polygon",
-            filter_speckle=8,
+            mode="spline",
+            filter_speckle=2,
             color_precision=8,
-            layer_difference=32,
+            layer_difference=20,
         )
     except Exception as exc:  # vtracer raises plain exceptions on decode/trace failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc

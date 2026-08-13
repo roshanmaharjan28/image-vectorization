@@ -39,8 +39,53 @@ void main() {
 }`;
 
 // Samples fill color + visibility from a 1-texel-per-layer palette texture (so toggling one
-// layer's visibility is an O(1) texSubImage2D, not a rebuild) and tints hovered/selected layers.
+// layer's visibility is an O(1) texSubImage2D, not a rebuild). Hover/select no longer tints the
+// fill here — see OUTLINE_FRAGMENT_SHADER, which draws just the edge, matching Canvas.tsx's CSS
+// stroke highlight instead of tinting the whole shape.
 const DISPLAY_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+flat in int v_layerIndex;
+uniform sampler2D u_palette;
+uniform int u_paletteWidth;
+out vec4 outColor;
+void main() {
+  vec4 c = texelFetch(u_palette, ivec2(v_layerIndex % u_paletteWidth, v_layerIndex / u_paletteWidth), 0);
+  if (c.a < 0.5) discard;
+  outColor = vec4(c.rgb, 1.0);
+}`;
+
+// Extrudes each outline segment into a constant-screen-pixel-width quad (a_side is -1/+1, a_other
+// is the segment's opposite endpoint) — the WebGL analogue of Canvas.tsx's
+// `vector-effect:non-scaling-stroke`, since gl.lineWidth is clamped to 1px on most GPUs/browsers.
+const OUTLINE_VERTEX_SHADER = `#version 300 es
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 a_other;
+layout(location = 2) in float a_side;
+layout(location = 3) in float a_layerIndex;
+uniform vec2 u_vbMin;
+uniform float u_meetScale;
+uniform vec2 u_meetOffset;
+uniform vec2 u_contentSize;
+uniform vec2 u_viewportPx;
+uniform float u_lineWidthPx;
+flat out int v_layerIndex;
+vec2 toClip(vec2 world) {
+  vec2 p = (world - u_vbMin) * u_meetScale + u_meetOffset;
+  return vec2(p.x / u_contentSize.x * 2.0 - 1.0, 1.0 - p.y / u_contentSize.y * 2.0);
+}
+void main() {
+  vec2 clipHere = toClip(a_position);
+  vec2 clipOther = toClip(a_other);
+  vec2 dir = normalize(clipOther - clipHere);
+  vec2 normal = vec2(-dir.y, dir.x);
+  vec2 offset = normal * (a_side * u_lineWidthPx * 0.5) * (2.0 / u_viewportPx);
+  gl_Position = vec4(clipHere + offset, 0.0, 1.0);
+  v_layerIndex = int(a_layerIndex + 0.5);
+}`;
+
+// Only lets fragments belonging to the hovered/selected layer through — same discard-by-index
+// trick as the pick shader, but for drawing rather than reading back.
+const OUTLINE_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 flat in int v_layerIndex;
 uniform sampler2D u_palette;
@@ -49,14 +94,14 @@ uniform int u_hoverIndex;
 uniform int u_selectIndex;
 out vec4 outColor;
 void main() {
+  if (v_layerIndex != u_hoverIndex && v_layerIndex != u_selectIndex) discard;
   vec4 c = texelFetch(u_palette, ivec2(v_layerIndex % u_paletteWidth, v_layerIndex / u_paletteWidth), 0);
   if (c.a < 0.5) discard;
-  vec3 rgb = c.rgb;
-  if (v_layerIndex == u_selectIndex || v_layerIndex == u_hoverIndex) {
-    rgb = mix(rgb, vec3(${HIGHLIGHT_RGB.join(', ')}), 0.55);
-  }
-  outColor = vec4(rgb, 1.0);
+  outColor = vec4(${HIGHLIGHT_RGB.join(', ')}, 1.0);
 }`;
+
+// Matches Canvas.tsx's `stroke-width:3` CSS px, scaled to the canvas's backing-store resolution.
+const OUTLINE_WIDTH_PX = 3 * DPR;
 
 // Encodes (layerIndex + 1) into RGB8 so a single-pixel readback resolves hover/click hit-testing
 // in O(1) regardless of layer count — the GL analogue of Canvas.tsx's data-layer-id lookup.
@@ -91,11 +136,18 @@ interface GLState {
   gl: WebGL2RenderingContext;
   displayProgram: WebGLProgram;
   pickProgram: WebGLProgram;
+  outlineProgram: WebGLProgram;
   vao: WebGLVertexArrayObject;
   positionBuffer: WebGLBuffer;
   layerIndexBuffer: WebGLBuffer;
   indexBuffer: WebGLBuffer;
   indexCount: number;
+  outlineVao: WebGLVertexArrayObject;
+  outlinePositionBuffer: WebGLBuffer;
+  outlineOtherBuffer: WebGLBuffer;
+  outlineSideBuffer: WebGLBuffer;
+  outlineLayerIndexBuffer: WebGLBuffer;
+  outlineVertexCount: number;
   paletteTexture: WebGLTexture;
   paletteWidth: number;
   maxTextureSize: number;
@@ -103,8 +155,14 @@ interface GLState {
   pickTexture: WebGLTexture;
   pickWidth: number;
   pickHeight: number;
-  displayUniforms: TransformUniforms & { hoverIndex: WebGLUniformLocation; selectIndex: WebGLUniformLocation };
+  displayUniforms: TransformUniforms;
   pickUniforms: TransformUniforms;
+  outlineUniforms: TransformUniforms & {
+    viewportPx: WebGLUniformLocation;
+    lineWidthPx: WebGLUniformLocation;
+    hoverIndex: WebGLUniformLocation;
+    selectIndex: WebGLUniformLocation;
+  };
 }
 
 interface ViewTransform {
@@ -145,6 +203,11 @@ function initGL(canvas: HTMLCanvasElement): GLState | null {
   const vs = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
   const displayProgram = createProgram(gl, vs, createShader(gl, gl.FRAGMENT_SHADER, DISPLAY_FRAGMENT_SHADER));
   const pickProgram = createProgram(gl, vs, createShader(gl, gl.FRAGMENT_SHADER, PICK_FRAGMENT_SHADER));
+  const outlineProgram = createProgram(
+    gl,
+    createShader(gl, gl.VERTEX_SHADER, OUTLINE_VERTEX_SHADER),
+    createShader(gl, gl.FRAGMENT_SHADER, OUTLINE_FRAGMENT_SHADER),
+  );
 
   const vao = gl.createVertexArray();
   const positionBuffer = gl.createBuffer();
@@ -160,6 +223,30 @@ function initGL(canvas: HTMLCanvasElement): GLState | null {
   gl.enableVertexAttribArray(1);
   gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  gl.bindVertexArray(null);
+
+  const outlineVao = gl.createVertexArray();
+  const outlinePositionBuffer = gl.createBuffer();
+  const outlineOtherBuffer = gl.createBuffer();
+  const outlineSideBuffer = gl.createBuffer();
+  const outlineLayerIndexBuffer = gl.createBuffer();
+  if (!outlineVao || !outlinePositionBuffer || !outlineOtherBuffer || !outlineSideBuffer || !outlineLayerIndexBuffer) {
+    return null;
+  }
+
+  gl.bindVertexArray(outlineVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlinePositionBuffer);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlineOtherBuffer);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlineSideBuffer);
+  gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlineLayerIndexBuffer);
+  gl.enableVertexAttribArray(3);
+  gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
   gl.bindVertexArray(null);
 
   const paletteTexture = gl.createTexture();
@@ -184,11 +271,18 @@ function initGL(canvas: HTMLCanvasElement): GLState | null {
     gl,
     displayProgram,
     pickProgram,
+    outlineProgram,
     vao,
     positionBuffer,
     layerIndexBuffer,
     indexBuffer,
     indexCount: 0,
+    outlineVao,
+    outlinePositionBuffer,
+    outlineOtherBuffer,
+    outlineSideBuffer,
+    outlineLayerIndexBuffer,
+    outlineVertexCount: 0,
     paletteTexture,
     paletteWidth: 0,
     // 2D textures are capped at this size on both axes — a one-row-per-layer palette silently
@@ -198,12 +292,15 @@ function initGL(canvas: HTMLCanvasElement): GLState | null {
     pickTexture,
     pickWidth: 0,
     pickHeight: 0,
-    displayUniforms: {
-      ...transformUniforms(gl, displayProgram),
-      hoverIndex: requireUniformLocation(gl, displayProgram, 'u_hoverIndex'),
-      selectIndex: requireUniformLocation(gl, displayProgram, 'u_selectIndex'),
-    },
+    displayUniforms: transformUniforms(gl, displayProgram),
     pickUniforms: transformUniforms(gl, pickProgram),
+    outlineUniforms: {
+      ...transformUniforms(gl, outlineProgram),
+      viewportPx: requireUniformLocation(gl, outlineProgram, 'u_viewportPx'),
+      lineWidthPx: requireUniformLocation(gl, outlineProgram, 'u_lineWidthPx'),
+      hoverIndex: requireUniformLocation(gl, outlineProgram, 'u_hoverIndex'),
+      selectIndex: requireUniformLocation(gl, outlineProgram, 'u_selectIndex'),
+    },
   };
 }
 
@@ -227,6 +324,16 @@ function uploadGeometry(state: GLState, geometry: SceneGeometry) {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, state.indexBuffer);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geometry.indices, gl.STATIC_DRAW);
   state.indexCount = geometry.indices.length;
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.outlinePositionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, geometry.outlinePositions, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.outlineOtherBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, geometry.outlineOther, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.outlineSideBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, geometry.outlineSide, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.outlineLayerIndexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, geometry.outlineLayerIndices, gl.STATIC_DRAW);
+  state.outlineVertexCount = geometry.outlinePositions.length / 2;
 }
 
 // Laid out as a width-capped 2D grid (row-major by layer index), not a single layerCount-wide
@@ -271,7 +378,7 @@ function setTransformUniforms(gl: WebGL2RenderingContext, u: TransformUniforms, 
   gl.uniform1i(u.paletteWidth, paletteWidth);
 }
 
-function renderDisplay(state: GLState, view: ViewTransform, hoverIndex: number, selectIndex: number) {
+function renderDisplay(state: GLState, view: ViewTransform) {
   const { gl } = state;
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
@@ -283,12 +390,31 @@ function renderDisplay(state: GLState, view: ViewTransform, hoverIndex: number, 
 
   gl.useProgram(state.displayProgram);
   setTransformUniforms(gl, state.displayUniforms, view, state.paletteWidth);
-  gl.uniform1i(state.displayUniforms.hoverIndex, hoverIndex);
-  gl.uniform1i(state.displayUniforms.selectIndex, selectIndex);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, state.paletteTexture);
   gl.bindVertexArray(state.vao);
   gl.drawElements(gl.TRIANGLES, state.indexCount, gl.UNSIGNED_INT, 0);
+  gl.bindVertexArray(null);
+}
+
+// Draws only the hovered/selected layer's edge on top of the already-rendered fill — call this
+// right after renderDisplay, into the same default framebuffer, so it composites over the fill.
+function renderOutline(state: GLState, view: ViewTransform, hoverIndex: number, selectIndex: number) {
+  const { gl } = state;
+  if (state.outlineVertexCount === 0 || (hoverIndex < 0 && selectIndex < 0)) return;
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.useProgram(state.outlineProgram);
+  setTransformUniforms(gl, state.outlineUniforms, view, state.paletteWidth);
+  gl.uniform2f(state.outlineUniforms.viewportPx, gl.canvas.width, gl.canvas.height);
+  gl.uniform1f(state.outlineUniforms.lineWidthPx, OUTLINE_WIDTH_PX);
+  gl.uniform1i(state.outlineUniforms.hoverIndex, hoverIndex);
+  gl.uniform1i(state.outlineUniforms.selectIndex, selectIndex);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, state.paletteTexture);
+  gl.bindVertexArray(state.outlineVao);
+  gl.drawArrays(gl.TRIANGLES, 0, state.outlineVertexCount);
   gl.bindVertexArray(null);
 }
 
@@ -437,7 +563,8 @@ export function CanvasGL({
 
     const hoverIndex = hoveredLayerId ? idMap.get(hoveredLayerId) ?? -1 : -1;
     const selectIndex = selectedLayerId ? idMap.get(selectedLayerId) ?? -1 : -1;
-    renderDisplay(state, view, hoverIndex, selectIndex);
+    renderDisplay(state, view);
+    renderOutline(state, view, hoverIndex, selectIndex);
     renderPick(state, view);
     // Only the fresh layer *set* (sceneGeometry) should retrigger the full GPU upload — hover/
     // select/visibility are handled by the cheaper effects below, same split as Canvas.tsx.
@@ -471,21 +598,23 @@ export function CanvasGL({
       const view = computeViewTransform(meta);
       const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
       const selectIndex = selectedLayerId ? layerIndexMapRef.current.get(selectedLayerId) ?? -1 : -1;
-      renderDisplay(state, view, hoverIndex, selectIndex);
+      renderDisplay(state, view);
+      renderOutline(state, view, hoverIndex, selectIndex);
       renderPick(state, view);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers]);
 
-  // Hover/select are pure uniform changes — redraw the display pass only; the pick buffer's
-  // contents don't depend on which layer is currently hovered/selected.
+  // Hover/select are pure uniform changes — redraw the display + outline passes only; the pick
+  // buffer's contents don't depend on which layer is currently hovered/selected.
   useEffect(() => {
     const state = glStateRef.current;
     if (!state || !meta) return;
     const view = computeViewTransform(meta);
     const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
     const selectIndex = selectedLayerId ? layerIndexMapRef.current.get(selectedLayerId) ?? -1 : -1;
-    renderDisplay(state, view, hoverIndex, selectIndex);
+    renderDisplay(state, view);
+    renderOutline(state, view, hoverIndex, selectIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoveredLayerId, selectedLayerId, sceneGeometry]);
 

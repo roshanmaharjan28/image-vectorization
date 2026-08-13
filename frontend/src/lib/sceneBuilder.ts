@@ -1,11 +1,19 @@
 import type { Layer } from '../types';
-import { triangulateLayerPath } from './triangulateLayer';
+import { buildLayerGeometry } from './triangulateLayer';
 
 export interface SceneGeometry {
   positions: Float32Array; // [x, y, x, y, ...] in viewBox space
   layerIndices: Float32Array; // one value per vertex — index into `layers`
   indices: Uint32Array;
   layerCount: number;
+  // Outline geometry: one thick-line quad (6 vertices, drawn via drawArrays TRIANGLES — see
+  // CanvasGL's outline shader) per contour edge, for every contour of every layer (outer rings
+  // and holes alike). Used to draw just the hovered/selected layer's edge, mirroring Canvas.tsx's
+  // CSS stroke instead of tinting the whole fill.
+  outlinePositions: Float32Array; // this vertex's endpoint, [x, y, ...]
+  outlineOther: Float32Array; // the segment's *other* endpoint, [x, y, ...] — lets the vertex shader compute a screen-space normal
+  outlineSide: Float32Array; // -1 / +1, which side of the segment this vertex is extruded to
+  outlineLayerIndices: Float32Array; // one value per vertex — index into `layers`
 }
 
 let colorCanvas: HTMLCanvasElement | null = null;
@@ -45,15 +53,45 @@ export function buildSceneGeometry(layers: Layer[]): SceneGeometry {
   const positions: number[] = [];
   const layerIndices: number[] = [];
   const indices: number[] = [];
+  const outlinePositions: number[] = [];
+  const outlineOther: number[] = [];
+  const outlineSide: number[] = [];
+  const outlineLayerIndices: number[] = [];
 
   for (let i = 0; i < layers.length; i++) {
-    const { positions: pos, indices: tris } = triangulateLayerPath(layers[i].attrs.d, layers[i].attrs.transform);
-    if (pos.length === 0) continue;
-    const base = positions.length / 2;
-    for (const t of tris) indices.push(base + t);
-    for (let v = 0; v < pos.length; v += 2) {
-      positions.push(pos[v], pos[v + 1]);
-      layerIndices.push(i);
+    const { triangulation, contours } = buildLayerGeometry(layers[i].attrs.d, layers[i].attrs.transform);
+    if (triangulation.positions.length > 0) {
+      const base = positions.length / 2;
+      for (const t of triangulation.indices) indices.push(base + t);
+      for (let v = 0; v < triangulation.positions.length; v += 2) {
+        positions.push(triangulation.positions[v], triangulation.positions[v + 1]);
+        layerIndices.push(i);
+      }
+    }
+
+    for (const contour of contours) {
+      const n = contour.length;
+      if (n < 2) continue;
+      for (let j = 0; j < n; j++) {
+        const [ax, ay] = contour[j];
+        const [bx, by] = contour[(j + 1) % n];
+        // Two triangles (a+n, a-n, b-n) and (a+n, b-n, b+n) forming the segment's thick-line quad
+        // — see the outline vertex shader in CanvasGL.tsx for how side/other resolve to a normal.
+        const verts: Array<[number, number, number, number, number]> = [
+          [ax, ay, bx, by, 1],
+          [ax, ay, bx, by, -1],
+          [bx, by, ax, ay, 1],
+          [ax, ay, bx, by, 1],
+          [bx, by, ax, ay, 1],
+          [bx, by, ax, ay, -1],
+        ];
+        for (const [px, py, ox, oy, side] of verts) {
+          outlinePositions.push(px, py);
+          outlineOther.push(ox, oy);
+          outlineSide.push(side);
+          outlineLayerIndices.push(i);
+        }
+      }
     }
   }
 
@@ -62,6 +100,10 @@ export function buildSceneGeometry(layers: Layer[]): SceneGeometry {
     layerIndices: new Float32Array(layerIndices),
     indices: new Uint32Array(indices),
     layerCount: layers.length,
+    outlinePositions: new Float32Array(outlinePositions),
+    outlineOther: new Float32Array(outlineOther),
+    outlineSide: new Float32Array(outlineSide),
+    outlineLayerIndices: new Float32Array(outlineLayerIndices),
   };
 }
 

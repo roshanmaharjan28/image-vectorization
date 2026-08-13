@@ -84,14 +84,23 @@ function triangulateContours(contours: Point[][]): LayerTriangulation {
   return { positions, indices };
 }
 
+export interface LayerGeometry {
+  /** Fill triangulation, ready for a WebGL fill draw call. */
+  triangulation: LayerTriangulation;
+  /** Raw flattened+transformed subpath contours (outers and holes alike), for outline/stroke rendering. */
+  contours: Point[][];
+}
+
 /**
  * Flattens a path's `d` attribute and triangulates it, ready for a WebGL fill draw call. Applies
  * the path's `transform` attribute (vtracer emits `translate(tx,ty)` on every path) to the
  * flattened points before triangulating, since — unlike the DOM/SVG renderer — nothing else here
- * would otherwise honor it.
+ * would otherwise honor it. Also returns the underlying contours so callers (sceneBuilder) can
+ * build outline geometry without re-flattening/re-transforming the path a second time.
  */
-export function triangulateLayerPath(d: string | undefined, transform?: string): LayerTriangulation {
-  if (!d) return EMPTY;
+export function buildLayerGeometry(d: string | undefined, transform?: string): LayerGeometry {
+  const empty = { triangulation: EMPTY, contours: [] };
+  if (!d) return empty;
   try {
     const contours = flattenPathToContours(d);
     if (transform) {
@@ -102,8 +111,8 @@ export function triangulateLayerPath(d: string | undefined, transform?: string):
         }
       }
     }
-    return triangulateContours(contours);
+    return { triangulation: triangulateContours(contours), contours };
   } catch {
-    return EMPTY;
+    return empty;
   }
 }
