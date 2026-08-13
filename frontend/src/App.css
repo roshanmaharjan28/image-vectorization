@@ -178,6 +178,18 @@
   max-width: none;
 }
 
+.canvas__gl-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 480px;
+  height: 320px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
 /* Layers panel */
 
 .layers-panel {

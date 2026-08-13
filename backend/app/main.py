@@ -52,8 +52,8 @@ def vectorize(image: UploadFile = File(...)):
         svg = vtracer.convert_raw_image_to_svg(
             img_bytes,
             img_format=img_format,
-            mode="spline",
-            filter_speckle=0,
+            mode="polygon",
+            filter_speckle=8,
             color_precision=8,
             layer_difference=32,
         )
