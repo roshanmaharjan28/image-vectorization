@@ -38,6 +38,7 @@ export function parseSvgToLayers(svgString: string): { meta: SvgMeta; layers: La
       fill: extractFill(el),
       attrs,
       visible: true,
+      deleted: false,
     };
   });
 

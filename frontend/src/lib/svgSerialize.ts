@@ -25,16 +25,10 @@ export function layerToPathMarkup(layer: Layer, options?: MarkupOptions): string
   return `<path ${attrsToString(attrs)} />`;
 }
 
-/** CSS rule that highlights a single layer by id, for use inside an inline <style> tag. */
-export function layerHighlightRule(layerId: string): string {
-  const selector = `path[data-layer-id="${layerId.replace(/"/g, '')}"]`;
-  return `${selector}{stroke:#4dabf7;stroke-width:3;stroke-opacity:.9;vector-effect:non-scaling-stroke;}`;
-}
-
-/** Serializes only visible layers, so hidden layers are excluded from the export. */
+/** Serializes only visible, non-deleted layers, so hidden/deleted layers are excluded from the export. */
 export function buildSvgString(meta: SvgMeta, layers: Layer[]): string {
   const paths = layers
-    .filter((layer) => layer.visible)
+    .filter((layer) => layer.visible && !layer.deleted)
     .map((layer) => `  ${layerToPathMarkup(layer)}`)
     .join('\n');
 

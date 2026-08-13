@@ -63,8 +63,11 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
   }, []);
 
+  // Soft-delete: flips a flag instead of shrinking the array, so it's exactly
+  // as cheap as toggling visibility and never forces Canvas to rebuild its
+  // path list (see Canvas.tsx's pathsMarkup memo).
   const handleDeleteLayer = useCallback((id: string) => {
-    setLayers((prev) => prev.filter((l) => l.id !== id));
+    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: false, deleted: true } : l)));
   }, []);
 
   function handleDownload() {

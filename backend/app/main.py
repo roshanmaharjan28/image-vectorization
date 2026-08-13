@@ -55,7 +55,7 @@ def vectorize(image: UploadFile = File(...)):
             mode="spline",
             filter_speckle=0,
             color_precision=8,
-            layer_difference=18,
+            layer_difference=32,
         )
     except Exception as exc:  # vtracer raises plain exceptions on decode/trace failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc
