@@ -38,9 +38,18 @@ def reduce_colors(
         _compactness, _sample_labels, centers = cv2.kmeans(
             sample, effective_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
         )
-        # Assign every opaque pixel (not just the k-means sample) to its nearest center.
-        dists = np.linalg.norm(opaque_lab[:, None, :] - centers[None, :, :], axis=2)
-        labels_full = np.argmin(dists, axis=1).astype(np.int32)
+        # Assign every opaque pixel (not just the k-means sample) to its nearest center,
+        # chunked so peak memory stays O(chunk_size * k) instead of O(N * k) - a full-size
+        # broadcast here (N up to millions of pixels) was large enough to OOM in
+        # memory-constrained deployments even though it ran fine on a dev machine.
+        labels_full = np.empty(opaque_lab.shape[0], dtype=np.int32)
+        chunk_size = 200_000
+        for start in range(0, opaque_lab.shape[0], chunk_size):
+            end = start + chunk_size
+            chunk_dists = np.linalg.norm(
+                opaque_lab[start:end, None, :] - centers[None, :, :], axis=2
+            )
+            labels_full[start:end] = np.argmin(chunk_dists, axis=1)
 
     centers, labels_full = _merge_close_centers(centers, labels_full, params.palette_merge_distance)
 
