@@ -15,9 +15,9 @@ function App() {
           <NavLink to="/v1" className={navLinkClass}>
             v1 (vtracer)
           </NavLink>
-          <NavLink to="/v2" className={navLinkClass}>
+          {/* <NavLink to="/v2" className={navLinkClass}>
             v2 (custom pipeline)
-          </NavLink>
+          </NavLink> */}
           <NavLink to="/v3" className={navLinkClass}>
             v3 (preprocess + vtracer)
           </NavLink>
