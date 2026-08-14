@@ -1,16 +1,19 @@
 import os
+from typing import Literal
 
 import vtracer
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.v2.router import router as v2_router
+from app.v3.router import router as v3_router
 
 load_dotenv()
 
 app = FastAPI(title="Image Vectorization API")
 app.include_router(v2_router, prefix="/api/v2")
+app.include_router(v3_router, prefix="/api/v3")
 
 cors_origins = [
     origin.strip()
@@ -40,7 +43,18 @@ def _resolve_format(filename: str, content_type: str | None) -> str:
 
 
 @app.post("/api/vectorize")
-def vectorize(image: UploadFile = File(...)):
+def vectorize(
+    image: UploadFile = File(...),
+    colormode: Literal["color", "binary"] = Form("color"),
+    hierarchical: Literal["stacked", "cutout"] = Form("cutout"),
+    mode: Literal["spline", "polygon", "none"] = Form("spline"),
+    filter_speckle: int = Form(2, ge=0, le=100),
+    color_precision: int = Form(8, ge=1, le=8),
+    layer_difference: int = Form(12, ge=0, le=255),
+    corner_threshold: int = Form(45, ge=0, le=180),
+    length_threshold: float = Form(3.5, ge=3.5, le=10),
+    splice_threshold: int = Form(30, ge=0, le=180),
+):
     img_format = _resolve_format(image.filename, image.content_type)
     img_bytes = image.file.read()
     if not img_bytes:
@@ -50,10 +64,15 @@ def vectorize(image: UploadFile = File(...)):
         svg = vtracer.convert_raw_image_to_svg(
             img_bytes,
             img_format=img_format,
-            mode="spline",
-            filter_speckle=2,
-            color_precision=8,
-            layer_difference=20,
+            colormode=colormode,
+            hierarchical=hierarchical,
+            mode=mode,
+            filter_speckle=filter_speckle,
+            color_precision=color_precision,
+            layer_difference=layer_difference,
+            corner_threshold=corner_threshold,
+            length_threshold=length_threshold,
+            splice_threshold=splice_threshold,
         )
     except Exception as exc:  # vtracer raises plain exceptions on decode/trace failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc

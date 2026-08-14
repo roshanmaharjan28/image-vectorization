@@ -1,6 +1,11 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const MIN_SAMPLES = 6;
+// High ceiling, not a real target: cutout-mode compound paths (a background/foreground
+// shape spanning most of the canvas, holes and all) can have subpaths far longer than
+// stacked-mode's small per-color blobs. A low cap here silently coarsens the ~1-sample-
+// per-4px spacing below into a few dozen points for those long subpaths, distorting the
+// flattened contour and, in turn, sceneBuilder's inside/outside hole classification.
 const MAX_SAMPLES = 64;
 const SAMPLE_SPACING_PX = 4;
 

@@ -12,6 +12,13 @@ interface Props {
   onHoverLayer: (id: string | null) => void;
   selectedLayerId: string | null;
   onSelectLayer: (id: string | null) => void;
+  // Adobe Image Trace-style "Preview" checkbox: overlays the original source bitmap on top of
+  // the traced result instead of replacing it, so the GL canvas (and its context/geometry) stays
+  // mounted and toggling back is instant.
+  showOriginal: boolean;
+  // Adobe Illustrator "Outline" view: renders every path as a black stroke on a white page
+  // instead of its fill color — see renderScene/renderPathsBackground below.
+  showPaths: boolean;
 }
 
 // Capped at 2x — sharp enough on retina without paying for absurd backing-store sizes on 3x/4x
@@ -20,6 +27,7 @@ interface Props {
 const DPR = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
 
 const HIGHLIGHT_RGB = [0.302, 0.671, 0.973]; // #4dabf7, same accent as Canvas.tsx's hover/select stroke
+const PATHS_OUTLINE_RGB = [0, 0, 0]; // black, for the Illustrator-style "show paths" outline view
 
 // Shared between the display and pick programs so a single VAO's attribute bindings (explicit
 // `layout(location=...)`) are valid for both, regardless of link order.
@@ -92,16 +100,32 @@ uniform sampler2D u_palette;
 uniform int u_paletteWidth;
 uniform int u_hoverIndex;
 uniform int u_selectIndex;
+uniform int u_highlightAll;
+uniform vec3 u_outlineColor;
 out vec4 outColor;
 void main() {
-  if (v_layerIndex != u_hoverIndex && v_layerIndex != u_selectIndex) discard;
+  if (u_highlightAll == 0 && v_layerIndex != u_hoverIndex && v_layerIndex != u_selectIndex) discard;
   vec4 c = texelFetch(u_palette, ivec2(v_layerIndex % u_paletteWidth, v_layerIndex / u_paletteWidth), 0);
   if (c.a < 0.5) discard;
-  outColor = vec4(${HIGHLIGHT_RGB.join(', ')}, 1.0);
+  outColor = vec4(u_outlineColor, 1.0);
 }`;
 
-// Matches Canvas.tsx's `stroke-width:3` CSS px, scaled to the canvas's backing-store resolution.
-const OUTLINE_WIDTH_PX = 3 * DPR;
+// Thinner than Canvas.tsx's `stroke-width:3` CSS px — a hairline reads clearer against the fill
+// than a thick one. Converted to backing-store pixels via the current resolutionScale (see
+// resolutionScaleFor) wherever it's used, not a fixed constant, since the backing-store
+// resolution itself now tracks zoom (see resolutionScaleFor below).
+const OUTLINE_WIDTH_CSS_PX = 1.25;
+
+// The canvas rasterizes once and CSS `transform: scale()` handles pan/zoom (see the class comment
+// on CanvasGL) — but a backing store fixed at DPR goes soft the moment CSS stretches it past 1x
+// zoom, for both the fill and the hover/select outline. Raising the backing-store resolution to
+// track the current zoom keeps the raster sharp, same as an SVG re-rasterizing at its displayed
+// size. Capped at 4x on top of DPR so extreme zoom can't allocate an unbounded GPU texture.
+const MAX_ZOOM_RESOLUTION = 4;
+
+function resolutionScaleFor(zoom: number) {
+  return DPR * Math.min(Math.max(zoom, 1), MAX_ZOOM_RESOLUTION);
+}
 
 // Encodes (layerIndex + 1) into RGB8 so a single-pixel readback resolves hover/click hit-testing
 // in O(1) regardless of layer count — the GL analogue of Canvas.tsx's data-layer-id lookup.
@@ -162,6 +186,8 @@ interface GLState {
     lineWidthPx: WebGLUniformLocation;
     hoverIndex: WebGLUniformLocation;
     selectIndex: WebGLUniformLocation;
+    highlightAll: WebGLUniformLocation;
+    outlineColor: WebGLUniformLocation;
   };
 }
 
@@ -300,6 +326,8 @@ function initGL(canvas: HTMLCanvasElement): GLState | null {
       lineWidthPx: requireUniformLocation(gl, outlineProgram, 'u_lineWidthPx'),
       hoverIndex: requireUniformLocation(gl, outlineProgram, 'u_hoverIndex'),
       selectIndex: requireUniformLocation(gl, outlineProgram, 'u_selectIndex'),
+      highlightAll: requireUniformLocation(gl, outlineProgram, 'u_highlightAll'),
+      outlineColor: requireUniformLocation(gl, outlineProgram, 'u_outlineColor'),
     },
   };
 }
@@ -354,10 +382,18 @@ function uploadPalette(state: GLState, palette: Uint8Array, layerCount: number) 
   state.paletteWidth = width;
 }
 
-function resizeCanvasAndPickBuffer(state: GLState, canvas: HTMLCanvasElement, cssWidth: number, cssHeight: number) {
+function resizeCanvasAndPickBuffer(
+  state: GLState,
+  canvas: HTMLCanvasElement,
+  cssWidth: number,
+  cssHeight: number,
+  resolutionScale: number,
+) {
   const { gl } = state;
-  const width = Math.max(1, Math.round(cssWidth * DPR));
-  const height = Math.max(1, Math.round(cssHeight * DPR));
+  // Clamped to maxTextureSize since the pick texture attached below is a real GL texture (unlike
+  // the default drawing buffer) and silently fails to allocate past that size on this GPU.
+  const width = Math.min(state.maxTextureSize, Math.max(1, Math.round(cssWidth * resolutionScale)));
+  const height = Math.min(state.maxTextureSize, Math.max(1, Math.round(cssHeight * resolutionScale)));
   canvas.width = width;
   canvas.height = height;
   canvas.style.width = `${cssWidth}px`;
@@ -399,23 +435,70 @@ function renderDisplay(state: GLState, view: ViewTransform) {
 
 // Draws only the hovered/selected layer's edge on top of the already-rendered fill — call this
 // right after renderDisplay, into the same default framebuffer, so it composites over the fill.
-function renderOutline(state: GLState, view: ViewTransform, hoverIndex: number, selectIndex: number) {
+// When highlightAll is set, every layer's edge is drawn instead (used right after a fresh
+// vectorize, before the user has clicked anything, and for the "show paths" outline view).
+function renderOutline(
+  state: GLState,
+  view: ViewTransform,
+  hoverIndex: number,
+  selectIndex: number,
+  highlightAll: boolean,
+  color: number[],
+  lineWidthPx: number,
+) {
   const { gl } = state;
-  if (state.outlineVertexCount === 0 || (hoverIndex < 0 && selectIndex < 0)) return;
+  if (state.outlineVertexCount === 0 || (!highlightAll && hoverIndex < 0 && selectIndex < 0)) return;
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
   gl.useProgram(state.outlineProgram);
   setTransformUniforms(gl, state.outlineUniforms, view, state.paletteWidth);
   gl.uniform2f(state.outlineUniforms.viewportPx, gl.canvas.width, gl.canvas.height);
-  gl.uniform1f(state.outlineUniforms.lineWidthPx, OUTLINE_WIDTH_PX);
+  gl.uniform1f(state.outlineUniforms.lineWidthPx, lineWidthPx);
   gl.uniform1i(state.outlineUniforms.hoverIndex, hoverIndex);
   gl.uniform1i(state.outlineUniforms.selectIndex, selectIndex);
+  gl.uniform1i(state.outlineUniforms.highlightAll, highlightAll ? 1 : 0);
+  gl.uniform3f(state.outlineUniforms.outlineColor, color[0], color[1], color[2]);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, state.paletteTexture);
   gl.bindVertexArray(state.outlineVao);
   gl.drawArrays(gl.TRIANGLES, 0, state.outlineVertexCount);
   gl.bindVertexArray(null);
+}
+
+// Clears the canvas to an opaque white page instead of drawing the fill pass — the backdrop for
+// the "show paths" outline view, where only edges (drawn separately, in black) should be visible.
+function renderPathsBackground(state: GLState) {
+  const { gl } = state;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.clearColor(1, 1, 1, 1);
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.BLEND);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+}
+
+// Picks between the normal colored-fill view and the black-on-white outline view, and layers a
+// blue hover/select highlight on top either way.
+function renderScene(
+  state: GLState,
+  view: ViewTransform,
+  hoverIndex: number,
+  selectIndex: number,
+  highlightAll: boolean,
+  showPaths: boolean,
+  lineWidthPx: number,
+) {
+  if (showPaths) {
+    renderPathsBackground(state);
+    renderOutline(state, view, -1, -1, true, PATHS_OUTLINE_RGB, lineWidthPx);
+    if (hoverIndex >= 0 || selectIndex >= 0) {
+      renderOutline(state, view, hoverIndex, selectIndex, false, HIGHLIGHT_RGB, lineWidthPx);
+    }
+  } else {
+    renderDisplay(state, view);
+    renderOutline(state, view, hoverIndex, selectIndex, highlightAll, HIGHLIGHT_RGB, lineWidthPx);
+  }
 }
 
 function renderPick(state: GLState, view: ViewTransform) {
@@ -474,16 +557,26 @@ export function CanvasGL({
   onHoverLayer,
   selectedLayerId,
   onSelectLayer,
+  showOriginal,
+  showPaths,
 }: Props) {
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [glUnsupported, setGlUnsupported] = useState(false);
+  // Every edge is drawn blue right after a fresh vectorize, until the user clicks a path or
+  // clicks anywhere else — mirrors a hover/select outline but for all layers at once.
+  const [allHighlighted, setAllHighlighted] = useState(true);
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glStateRef = useRef<GLState | null>(null);
   const layerIndexMapRef = useRef<Map<string, number>>(new Map());
   const layersBaselineRef = useRef<Layer[] | null>(null);
   const rafPickPending = useRef(false);
+  // Tracks the resolutionScale currently baked into the canvas/pick-buffer backing store, so the
+  // hover/select and visibility effects (which don't resize anything themselves) can compute the
+  // matching outline line width without recomputing resolutionScaleFor(scale) — which could
+  // otherwise briefly disagree with the buffer's actual resolution mid zoom-debounce.
+  const resolutionScaleRef = useRef(DPR);
 
   const isVectorized = meta !== null;
 
@@ -535,6 +628,16 @@ export function CanvasGL({
     };
   }, [isVectorized]);
 
+  // Any click anywhere — a path, empty canvas, or outside the canvas entirely — ends the
+  // post-vectorize all-highlighted preview.
+  useEffect(() => {
+    function handleGlobalClick() {
+      setAllHighlighted(false);
+    }
+    document.addEventListener('click', handleGlobalClick);
+    return () => document.removeEventListener('click', handleGlobalClick);
+  }, []);
+
   // Triangulating every layer's path is only worth redoing when the layer *set* changes — a
   // fresh vectorize — not on every visibility toggle. Mirrors Canvas.tsx's pathsMarkup memo.
   const sceneGeometry = useMemo(() => buildSceneGeometry(layers), [meta]);
@@ -552,7 +655,9 @@ export function CanvasGL({
     }
     const state = glStateRef.current;
     const view = computeViewTransform(meta);
-    resizeCanvasAndPickBuffer(state, canvas, view.width, view.height);
+    const resolutionScale = resolutionScaleFor(scale);
+    resolutionScaleRef.current = resolutionScale;
+    resizeCanvasAndPickBuffer(state, canvas, view.width, view.height, resolutionScale);
     uploadGeometry(state, sceneGeometry);
     uploadPalette(state, buildPalette(layers), layers.length);
 
@@ -560,11 +665,11 @@ export function CanvasGL({
     layers.forEach((layer, i) => idMap.set(layer.id, i));
     layerIndexMapRef.current = idMap;
     layersBaselineRef.current = null;
+    setAllHighlighted(true);
 
     const hoverIndex = hoveredLayerId ? idMap.get(hoveredLayerId) ?? -1 : -1;
     const selectIndex = selectedLayerId ? idMap.get(selectedLayerId) ?? -1 : -1;
-    renderDisplay(state, view);
-    renderOutline(state, view, hoverIndex, selectIndex);
+    renderScene(state, view, hoverIndex, selectIndex, true, showPaths, OUTLINE_WIDTH_CSS_PX * resolutionScale);
     renderPick(state, view);
     // Only the fresh layer *set* (sceneGeometry) should retrigger the full GPU upload — hover/
     // select/visibility are handled by the cheaper effects below, same split as Canvas.tsx.
@@ -598,8 +703,7 @@ export function CanvasGL({
       const view = computeViewTransform(meta);
       const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
       const selectIndex = selectedLayerId ? layerIndexMapRef.current.get(selectedLayerId) ?? -1 : -1;
-      renderDisplay(state, view);
-      renderOutline(state, view, hoverIndex, selectIndex);
+      renderScene(state, view, hoverIndex, selectIndex, allHighlighted, showPaths, OUTLINE_WIDTH_CSS_PX * resolutionScaleRef.current);
       renderPick(state, view);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,10 +717,38 @@ export function CanvasGL({
     const view = computeViewTransform(meta);
     const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
     const selectIndex = selectedLayerId ? layerIndexMapRef.current.get(selectedLayerId) ?? -1 : -1;
-    renderDisplay(state, view);
-    renderOutline(state, view, hoverIndex, selectIndex);
+    renderScene(state, view, hoverIndex, selectIndex, allHighlighted, showPaths, OUTLINE_WIDTH_CSS_PX * resolutionScaleRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hoveredLayerId, selectedLayerId, sceneGeometry]);
+  }, [hoveredLayerId, selectedLayerId, sceneGeometry, allHighlighted, showPaths]);
+
+  // Re-rasterizes the canvas and pick buffer at a resolution matching the current zoom so CSS-
+  // scaling the artboard (via `transform: scale()` in the JSX below) doesn't have to stretch too
+  // few source pixels — without this, both the fill and the hover/select outline go soft past 1x
+  // zoom, since the backing store was sized once at DPR and then just blown up visually. Debounced
+  // to the trailing edge of a zoom gesture via setTimeout (not requestAnimationFrame): wheel events
+  // during a real scroll/pinch gesture routinely have gaps longer than one frame, so an rAF-based
+  // "cancel and reschedule" fires on almost every tick instead of just the end of the gesture —
+  // reallocating the canvas + pick texture and doing a full re-render each time, which gets
+  // increasingly expensive as the backing store grows toward MAX_ZOOM_RESOLUTION. A real time-based
+  // debounce only does that work once the zoom gesture actually pauses.
+  useEffect(() => {
+    const state = glStateRef.current;
+    const canvas = canvasRef.current;
+    if (!state || !canvas || !meta) return;
+    const timeoutId = setTimeout(() => {
+      const resolutionScale = resolutionScaleFor(scale);
+      if (Math.abs(resolutionScale - resolutionScaleRef.current) < 0.01) return;
+      resolutionScaleRef.current = resolutionScale;
+      const view = computeViewTransform(meta);
+      resizeCanvasAndPickBuffer(state, canvas, view.width, view.height, resolutionScale);
+      const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
+      const selectIndex = selectedLayerId ? layerIndexMapRef.current.get(selectedLayerId) ?? -1 : -1;
+      renderScene(state, view, hoverIndex, selectIndex, allHighlighted, showPaths, OUTLINE_WIDTH_CSS_PX * resolutionScale);
+      renderPick(state, view);
+    }, 120);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scale]);
 
   return (
     <div
@@ -638,13 +770,22 @@ export function CanvasGL({
             glUnsupported ? (
               <div className="canvas__surface canvas__gl-error">WebGL2 is not supported in this browser.</div>
             ) : (
-              <canvas
-                ref={canvasRef}
-                className="canvas__surface"
-                onMouseMove={handleCanvasMouseMove}
-                onMouseLeave={() => onHoverLayer(null)}
-                onClick={handleCanvasClick}
-              />
+              <>
+                <canvas
+                  ref={canvasRef}
+                  className="canvas__surface"
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseLeave={() => onHoverLayer(null)}
+                  onClick={handleCanvasClick}
+                />
+                {showOriginal && imageUrl && (
+                  <img
+                    src={imageUrl}
+                    alt="Original artwork"
+                    className="canvas__surface canvas__image canvas__bitmap-overlay"
+                  />
+                )}
+              </>
             )
           ) : (
             imageUrl && <img src={imageUrl} alt="Uploaded artwork" className="canvas__surface canvas__image" />

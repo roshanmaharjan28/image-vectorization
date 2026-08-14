@@ -15,3 +15,18 @@ export interface Layer {
 }
 
 export type Stage = 'empty' | 'has-image' | 'vectorizing' | 'vectorized';
+
+// vtracer-facing params, shared by v1 (raw vtracer call) and v3 (preprocess +
+// vtracer — see backend/app/v3/params.py, whose preprocessing fields aren't
+// exposed here since there's no UI control for them yet).
+export interface VectorizeParams {
+  colormode: 'color' | 'binary';
+  hierarchical: 'stacked' | 'cutout';
+  mode: 'spline' | 'polygon' | 'none';
+  filterSpeckle: number;
+  colorPrecision: number;
+  layerDifference: number;
+  cornerThreshold: number;
+  lengthThreshold: number;
+  spliceThreshold: number;
+}

@@ -35,8 +35,9 @@ def vectorize_image_v3(raw: bytes, params: VectorizeParamsV3 = VectorizeParamsV3
     return vtracer.convert_raw_image_to_svg(
         png_bytes,
         img_format="png",
+        colormode=params.colormode,
         mode=params.mode,
-        # hierarchical=params.hierarchical,
+        hierarchical=params.hierarchical,
         filter_speckle=params.filter_speckle,
         color_precision=params.color_precision,
         layer_difference=params.layer_difference,

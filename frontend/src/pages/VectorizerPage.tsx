@@ -6,9 +6,11 @@ import { Toolbar } from '../components/Toolbar';
 // import { Canvas } from '../components/Canvas';
 // import { CanvasGL } from '../components/CanvasGL';
 import { LayersPanel } from '../components/LayersPanel';
+import { ParamsPanel } from '../components/ParamsPanel';
 import { parseSvgToLayers } from '../lib/svgParse';
 import { buildSvgString } from '../lib/svgSerialize';
-import type { Layer, Stage, SvgMeta } from '../types';
+import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
+import type { Layer, Stage, SvgMeta, VectorizeParams } from '../types';
 import '../App.css';
 import { CanvasGL } from '../components/CanvasGL';
 
@@ -17,6 +19,10 @@ interface VectorizerPageProps {
 }
 
 export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
+  // v1 (raw vtracer call) and v3 (preprocess + vtracer) both expose tunable
+  // vtracer params; v2 doesn't use vtracer at all.
+  const showParams = !apiEndpoint.includes('/v2/');
+  const isV3 = apiEndpoint.includes('/v3/');
   const [stage, setStage] = useState<Stage>('empty');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -25,6 +31,27 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
+  // Mutually exclusive canvas overlay modes: original swaps in the source bitmap, paths shows
+  // every traced edge in black on white (Illustrator's Outline view) — see CanvasGL.tsx.
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [showPaths, setShowPaths] = useState(false);
+
+  function handleToggleShowOriginal() {
+    setShowOriginal((v) => {
+      const next = !v;
+      if (next) setShowPaths(false);
+      return next;
+    });
+  }
+
+  function handleToggleShowPaths() {
+    setShowPaths((v) => {
+      const next = !v;
+      if (next) setShowOriginal(false);
+      return next;
+    });
+  }
 
   function handleImageSelected(file: File) {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
@@ -33,6 +60,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setMeta(null);
     setLayers([]);
     setError(null);
+    setShowOriginal(false);
+    setShowPaths(false);
     setStage('has-image');
   }
 
@@ -40,10 +69,13 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     if (!imageFile) return;
     setStage('vectorizing');
     setError(null);
+    setShowOriginal(false);
+    setShowPaths(false);
 
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
+      if (showParams) appendVectorizeParams(formData, params);
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiUrl}${apiEndpoint}`, { method: 'POST', body: formData });
 
@@ -62,6 +94,10 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       setStage('has-image');
     }
   }
+
+  const handleParamsChange = useCallback((patch: Partial<VectorizeParams>) => {
+    setParams((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   const handleToggleVisible = useCallback((id: string) => {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
@@ -93,6 +129,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setMeta(null);
     setLayers([]);
     setError(null);
+    setShowOriginal(false);
+    setShowPaths(false);
     setStage('empty');
   }
 
@@ -112,8 +150,21 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
         onVectorize={handleVectorize}
         onDownload={handleDownload}
         onReset={handleReset}
+        showOriginal={showOriginal}
+        onToggleShowOriginal={handleToggleShowOriginal}
+        showPaths={showPaths}
+        onToggleShowPaths={handleToggleShowPaths}
       />
       <div className="app__body">
+        {showParams && (
+          <ParamsPanel
+            params={params}
+            onChange={handleParamsChange}
+            onRevectorize={handleVectorize}
+            canRevectorize={Boolean(imageFile)}
+            isVectorizing={stage === 'vectorizing'}
+          />
+        )}
         <CanvasGL
           imageUrl={imageUrl}
           meta={meta}
@@ -122,6 +173,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onHoverLayer={setHoveredLayerId}
           selectedLayerId={selectedLayerId}
           onSelectLayer={setSelectedLayerId}
+          showOriginal={showOriginal}
+          showPaths={showPaths}
         />
         <LayersPanel
           layers={layers}
