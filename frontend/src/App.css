@@ -169,6 +169,7 @@
   top: 50%;
   left: 50%;
   transform-origin: center;
+  will-change: transform;
 }
 
 .canvas__page {
@@ -229,14 +230,6 @@
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   pointer-events: all;
-}
-
-.canvas__gizmo-handle--rotate {
-  cursor: grab;
-}
-
-.canvas__gizmo-handle--rotate:active {
-  cursor: grabbing;
 }
 
 .canvas__gl-error {

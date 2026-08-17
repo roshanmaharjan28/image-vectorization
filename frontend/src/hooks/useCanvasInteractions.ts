@@ -1,8 +1,12 @@
 import { useRef } from 'react';
 import type { Dispatch, MouseEvent as ReactMouseEvent, RefObject, SetStateAction, WheelEvent as ReactWheelEvent } from 'react';
 import type { Layer } from '../types';
-import { clientToWorld, cornerResizeCursor, type GizmoState, type ViewTransform } from '../lib/canvasViewTransform';
+import { ROTATE_CURSOR, clientToWorld, cornerResizeCursor, type GizmoState, type ViewTransform } from '../lib/canvasViewTransform';
 import { rotateAroundPivot, scaleAroundPivot, type Mat2x3 } from '../lib/svgTransform';
+
+// Client-space distance a pan drag must exceed before it counts as an actual pan rather than a
+// click — below this, mouseup should still fall through to the normal select/deselect click.
+const PAN_DRAG_THRESHOLD_PX = 4;
 
 type DragMode = 'pan' | 'move' | 'scale' | 'rotate';
 
@@ -57,6 +61,15 @@ export function useCanvasInteractions({
   setOffset,
 }: Options) {
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
+  // Raw client-space mousedown position for the current pan drag, used only to measure whether
+  // the pointer actually moved (see PAN_DRAG_THRESHOLD_PX) — separate from dragOrigin, which is
+  // pre-offset for directly computing the artboard's translate.
+  const panStartClientRef = useRef<{ x: number; y: number } | null>(null);
+  const panMovedRef = useRef(false);
+  // Lets the pinned drag cursor (resize/rotate) win over `.canvas`'s own stylesheet cursor rule,
+  // which otherwise takes precedence over anything set on document.body for any pointer position
+  // inside the canvas (see handleGizmoHandleMouseDown).
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const rafPickPending = useRef(false);
 
   // Gizmo drag state (move/scale/rotate), plus the pan drag above. A ref, not state, since a
@@ -70,15 +83,36 @@ export function useCanvasInteractions({
   // whichever single shape happened to be under the pointer.
   const suppressNextClickRef = useRef(false);
 
+  function updateHoverAt(clientX: number, clientY: number) {
+    const idx = pickLayerIndexAt(clientX, clientY);
+    onHoverLayer(idx >= 0 ? layers[idx]?.id ?? null : null);
+  }
+
+  function schedulePickAt(clientX: number, clientY: number) {
+    if (rafPickPending.current) return;
+    rafPickPending.current = true;
+    requestAnimationFrame(() => {
+      rafPickPending.current = false;
+      updateHoverAt(clientX, clientY);
+    });
+  }
+
   function handleWheel(e: ReactWheelEvent<HTMLDivElement>) {
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
     setScale((s) => Math.min(8, Math.max(0.1, s + delta * s)));
+    // Zoom is anchored to the artboard's center, not the cursor, so the artwork shifts beneath a
+    // stationary pointer on every tick — re-pick at the same client position (deferred a frame so
+    // the DOM has the updated CSS transform) so the hover highlight follows what's actually under
+    // the cursor instead of whatever was there before this tick.
+    schedulePickAt(e.clientX, e.clientY);
   }
 
   function handleWrapperMouseDown(e: ReactMouseEvent<HTMLDivElement>) {
     dragModeRef.current = 'pan';
     dragOrigin.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
+    panStartClientRef.current = { x: e.clientX, y: e.clientY };
+    panMovedRef.current = false;
   }
 
   function applyDrag(mode: 'move' | 'scale' | 'rotate', clientX: number, clientY: number) {
@@ -125,6 +159,11 @@ export function useCanvasInteractions({
     const mode = dragModeRef.current;
     if (mode === 'pan') {
       if (!dragOrigin.current) return;
+      if (!panMovedRef.current && panStartClientRef.current) {
+        const dx = e.clientX - panStartClientRef.current.x;
+        const dy = e.clientY - panStartClientRef.current.y;
+        if (Math.hypot(dx, dy) > PAN_DRAG_THRESHOLD_PX) panMovedRef.current = true;
+      }
       setOffset({ x: e.clientX - dragOrigin.current.x, y: e.clientY - dragOrigin.current.y });
       return;
     }
@@ -140,13 +179,16 @@ export function useCanvasInteractions({
   }
 
   function stopDrag() {
-    if (dragModeRef.current === 'move' || dragModeRef.current === 'scale' || dragModeRef.current === 'rotate') {
+    const mode = dragModeRef.current;
+    if (mode === 'move' || mode === 'scale' || mode === 'rotate' || (mode === 'pan' && panMovedRef.current)) {
       suppressNextClickRef.current = true;
     }
     dragModeRef.current = null;
     dragOrigin.current = null;
     dragInfoRef.current = null;
-    document.body.style.cursor = '';
+    panStartClientRef.current = null;
+    panMovedRef.current = false;
+    if (wrapperRef.current) wrapperRef.current.style.cursor = '';
   }
 
   function snapshotInitialTransforms(): Map<string, Mat2x3> {
@@ -174,10 +216,12 @@ export function useCanvasInteractions({
         pivot: gizmo.worldCorners[oppositeIndex],
         startCorner: gizmo.worldCorners[cornerIndex],
       };
-      // Pin the resize cursor for the whole drag — otherwise the moment the pointer strays off
-      // the (tiny) handle circle it falls back to whatever the ancestor's cursor is (e.g. the
-      // canvas's grab/grabbing pan cursor), even mid-drag.
-      document.body.style.cursor = cornerResizeCursor(gizmo, cornerIndex);
+      // Pin the resize cursor on the wrapper itself (not document.body) for the whole drag —
+      // `.canvas` has its own stylesheet cursor rule, which wins over anything set on an
+      // ancestor for any pointer position inside it, so the moment the pointer strays off the
+      // (tiny) handle circle it would otherwise fall back to the canvas's grab/grabbing pan
+      // cursor, even mid-drag.
+      if (wrapperRef.current) wrapperRef.current.style.cursor = cornerResizeCursor(gizmo, cornerIndex);
     } else {
       const pivot = gizmo.center;
       dragInfoRef.current = {
@@ -186,7 +230,7 @@ export function useCanvasInteractions({
         pivot,
         startAngle: Math.atan2(startWorld[1] - pivot[1], startWorld[0] - pivot[0]),
       };
-      document.body.style.cursor = 'grabbing';
+      if (wrapperRef.current) wrapperRef.current.style.cursor = ROTATE_CURSOR;
     }
     dragModeRef.current = mode;
   }
@@ -209,14 +253,7 @@ export function useCanvasInteractions({
   }
 
   function handleCanvasMouseMove(e: ReactMouseEvent<HTMLCanvasElement>) {
-    if (rafPickPending.current) return;
-    rafPickPending.current = true;
-    const { clientX, clientY } = e;
-    requestAnimationFrame(() => {
-      rafPickPending.current = false;
-      const idx = pickLayerIndexAt(clientX, clientY);
-      onHoverLayer(idx >= 0 ? layers[idx]?.id ?? null : null);
-    });
+    schedulePickAt(e.clientX, e.clientY);
   }
 
   function handleCanvasClick(e: ReactMouseEvent<HTMLCanvasElement>) {
@@ -236,6 +273,7 @@ export function useCanvasInteractions({
   }
 
   return {
+    wrapperRef,
     wrapperHandlers: {
       onWheel: handleWheel,
       onMouseDown: handleWrapperMouseDown,

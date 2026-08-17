@@ -61,6 +61,17 @@ export function cornerResizeCursor(gizmo: GizmoState, index: number): string {
   return 'nesw-resize';
 }
 
+const ROTATE_CURSOR_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'>" +
+  "<path d='M10 3a7 7 0 1 0 6.32 4' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round'/>" +
+  "<path d='M10 3a7 7 0 1 0 6.32 4' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/>" +
+  "<path d='M16.8 3.2 17.3 7.3 13.4 5.9Z' fill='black' stroke='white' stroke-width='0.6'/>" +
+  '</svg>';
+
+/** Custom circular-arrow cursor for the gizmo's rotate handle, both at rest and pinned for the
+ *  whole duration of a rotate drag (see handleGizmoHandleMouseDown in useCanvasInteractions). */
+export const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(ROTATE_CURSOR_SVG)}") 10 10, grab`;
+
 /**
  * Derives the gizmo's box + handle positions from the current selection's world-space bounds
  * (sceneGeometry.layerBounds, transformed by each layer's current `transform`) — pure geometry,

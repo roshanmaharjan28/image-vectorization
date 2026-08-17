@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Layer, SvgMeta } from '../types';
-import { computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
+import { ROTATE_CURSOR, computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
 import { useCanvasGLScene } from '../hooks/useCanvasGLScene';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 
@@ -82,7 +82,7 @@ export function CanvasGL({
     [layers, selectedLayerIds, meta, sceneGeometry],
   );
 
-  const { wrapperHandlers, canvasHandlers, handleGizmoHandleMouseDown } = useCanvasInteractions({
+  const { wrapperRef, wrapperHandlers, canvasHandlers, handleGizmoHandleMouseDown } = useCanvasInteractions({
     view,
     layers,
     selectedLayerIds,
@@ -105,7 +105,7 @@ export function CanvasGL({
     : null;
 
   return (
-    <div className="canvas" {...wrapperHandlers}>
+    <div className="canvas" ref={wrapperRef} {...wrapperHandlers}>
       <div
         className="canvas__artboard"
         style={{
@@ -160,6 +160,7 @@ export function CanvasGL({
                       cx={rotateHandlePage[0]}
                       cy={rotateHandlePage[1]}
                       r={HANDLE_RADIUS_PX / scale}
+                      style={{ cursor: ROTATE_CURSOR }}
                       onMouseDown={(e) => handleGizmoHandleMouseDown(e, 'rotate')}
                     />
                   </svg>
