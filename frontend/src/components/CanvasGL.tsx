@@ -85,7 +85,7 @@ export function CanvasGL({
     geometryVersion,
   });
 
-  const { editingLayerId, pathAnchors, handleCanvasDoubleClick, handleAnchorMouseDown, pathEditingWrapperHandlers } =
+  const { editingLayerId, pathAnchors, exitPathEdit, handleCanvasDoubleClick, handleAnchorMouseDown, pathEditingWrapperHandlers } =
     useCanvasPathEditing({
       view,
       layers,
@@ -130,6 +130,27 @@ export function CanvasGL({
     handleCanvasDoubleClick(e);
   }
 
+  // Cursor tool: a plain click anywhere else — the black page background or another path — should
+  // drop out of path-edit mode, same as Escape. Skipped when this click is the tail end of a real
+  // pan/gizmo drag (suppressNextClickRef), same guard canvasHandlers.onClick uses for selection.
+  function handleCursorClick(e: ReactMouseEvent<HTMLCanvasElement>) {
+    if (editingLayerId && !suppressNextClickRef.current) exitPathEdit();
+    canvasHandlers.onClick(e);
+  }
+
+  // The dark area outside the artboard page belongs to the wrapper div, not the <canvas> element,
+  // so a click out there never reaches handleCursorClick above — handle the same exit here. Guarded
+  // to the wrapper itself (not a bubbled click from the canvas/svg children, which handleCursorClick
+  // and suppressNextClickRef already resolved) so a post-drag click isn't double-processed.
+  function handleWrapperClick(e: ReactMouseEvent<HTMLDivElement>) {
+    if (e.target !== e.currentTarget) return;
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    if (editingLayerId) exitPathEdit();
+  }
+
   const rotateHandlePage: [number, number] | null = gizmo
     ? [
         gizmo.rotateOriginPage[0] + gizmo.rotateDirPage[0] * (ROTATE_HANDLE_OFFSET_PX / scale),
@@ -143,6 +164,7 @@ export function CanvasGL({
   // through useCanvasInteractions.
   const combinedWrapperHandlers = {
     ...wrapperHandlers,
+    onClick: handleWrapperClick,
     onMouseMove: (e: ReactMouseEvent<HTMLDivElement>) => {
       wrapperHandlers.onMouseMove(e);
       pathEditingWrapperHandlers.onMouseMove(e);
@@ -179,7 +201,7 @@ export function CanvasGL({
                   ref={canvasRef}
                   className="canvas__surface"
                   {...canvasHandlers}
-                  onClick={tool === 'pen' ? handlePenClick : canvasHandlers.onClick}
+                  onClick={tool === 'pen' ? handlePenClick : tool === 'cursor' ? handleCursorClick : canvasHandlers.onClick}
                   onDoubleClick={tool === 'cursor' ? handleCanvasDoubleClick : undefined}
                 />
                 {showOriginal && imageUrl && (
