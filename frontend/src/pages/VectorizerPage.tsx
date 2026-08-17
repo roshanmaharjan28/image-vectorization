@@ -18,6 +18,12 @@ interface VectorizerPageProps {
   apiEndpoint: string;
 }
 
+// The canvas overlay is one of three mutually exclusive states — the plain traced result, the
+// original source bitmap ("Preview" in Adobe Image Trace), or the black-on-white path outline
+// ("Outline" view in Illustrator) — modeled as a single value instead of two booleans so turning
+// one on can't leave the other on too.
+type OverlayMode = 'none' | 'original' | 'paths';
+
 export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   // v1 (raw vtracer call) and v3 (preprocess + vtracer) both expose tunable
   // vtracer params; v2 doesn't use vtracer at all.
@@ -32,25 +38,14 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
-  // Mutually exclusive canvas overlay modes: original swaps in the source bitmap, paths shows
-  // every traced edge in black on white (Illustrator's Outline view) — see CanvasGL.tsx.
-  const [showOriginal, setShowOriginal] = useState(false);
-  const [showPaths, setShowPaths] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
 
   function handleToggleShowOriginal() {
-    setShowOriginal((v) => {
-      const next = !v;
-      if (next) setShowPaths(false);
-      return next;
-    });
+    setOverlayMode((mode) => (mode === 'original' ? 'none' : 'original'));
   }
 
   function handleToggleShowPaths() {
-    setShowPaths((v) => {
-      const next = !v;
-      if (next) setShowOriginal(false);
-      return next;
-    });
+    setOverlayMode((mode) => (mode === 'paths' ? 'none' : 'paths'));
   }
 
   function handleImageSelected(file: File) {
@@ -60,8 +55,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setMeta(null);
     setLayers([]);
     setError(null);
-    setShowOriginal(false);
-    setShowPaths(false);
+    setOverlayMode('none');
     setStage('has-image');
   }
 
@@ -69,8 +63,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     if (!imageFile) return;
     setStage('vectorizing');
     setError(null);
-    setShowOriginal(false);
-    setShowPaths(false);
+    setOverlayMode('none');
 
     try {
       const formData = new FormData();
@@ -160,8 +153,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setMeta(null);
     setLayers([]);
     setError(null);
-    setShowOriginal(false);
-    setShowPaths(false);
+    setOverlayMode('none');
     setStage('empty');
   }
 
@@ -172,6 +164,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       </div>
     );
   }
+
+  const showOriginal = overlayMode === 'original';
+  const showPaths = overlayMode === 'paths';
 
   return (
     <div className="app">
