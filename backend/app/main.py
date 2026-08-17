@@ -46,7 +46,7 @@ def _resolve_format(filename: str, content_type: str | None) -> str:
 def vectorize(
     image: UploadFile = File(...),
     colormode: Literal["color", "binary"] = Form("color"),
-    hierarchical: Literal["stacked", "cutout"] = Form("cutout"),
+    hierarchical: Literal["stacked", "cutout"] = Form("stacked"),
     mode: Literal["spline", "polygon", "none"] = Form("spline"),
     filter_speckle: int = Form(2, ge=0, le=100),
     color_precision: int = Form(8, ge=1, le=8),

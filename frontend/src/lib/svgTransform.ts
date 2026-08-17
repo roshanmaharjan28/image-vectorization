@@ -1,8 +1,8 @@
 export type Mat2x3 = [number, number, number, number, number, number]; // a b c d e f, SVG matrix order
 
-const IDENTITY: Mat2x3 = [1, 0, 0, 1, 0, 0];
+export const IDENTITY: Mat2x3 = [1, 0, 0, 1, 0, 0];
 
-function multiply(m1: Mat2x3, m2: Mat2x3): Mat2x3 {
+export function multiply(m1: Mat2x3, m2: Mat2x3): Mat2x3 {
   const [a1, b1, c1, d1, e1, f1] = m1;
   const [a2, b2, c2, d2, e2, f2] = m2;
   return [
@@ -78,4 +78,27 @@ export function parseTransform(transform: string | undefined): Mat2x3 {
 
 export function applyTransform([a, b, c, d, e, f]: Mat2x3, x: number, y: number): [number, number] {
   return [a * x + c * y + e, b * x + d * y + f];
+}
+
+export function isIdentityMatrix(m: Mat2x3): boolean {
+  return m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0;
+}
+
+/** Composes a pure translation onto the outside of `m` — i.e. moves the already-transformed shape by (dx, dy). */
+export function translateMatrix(m: Mat2x3, dx: number, dy: number): Mat2x3 {
+  return multiply([1, 0, 0, 1, dx, dy], m);
+}
+
+/** Composes a scale about world-space point (px, py) onto the outside of `m`, used for gizmo corner-handle drags. */
+export function scaleAroundPivot(m: Mat2x3, px: number, py: number, sx: number, sy: number): Mat2x3 {
+  const scale: Mat2x3 = multiply(multiply([1, 0, 0, 1, px, py], [sx, 0, 0, sy, 0, 0]), [1, 0, 0, 1, -px, -py]);
+  return multiply(scale, m);
+}
+
+/** Composes a rotation (radians) about world-space point (px, py) onto the outside of `m`, used for the gizmo rotate handle. */
+export function rotateAroundPivot(m: Mat2x3, px: number, py: number, radians: number): Mat2x3 {
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const rotation: Mat2x3 = multiply(multiply([1, 0, 0, 1, px, py], [cos, sin, -sin, cos, 0, 0]), [1, 0, 0, 1, -px, -py]);
+  return multiply(rotation, m);
 }

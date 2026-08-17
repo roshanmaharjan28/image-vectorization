@@ -8,7 +8,7 @@ import { Toolbar } from '../components/Toolbar';
 import { LayersPanel } from '../components/LayersPanel';
 import { ParamsPanel } from '../components/ParamsPanel';
 import { parseSvgToLayers } from '../lib/svgParse';
-import { buildSvgString } from '../lib/svgSerialize';
+import { buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
 import type { Layer, Stage, SvgMeta, VectorizeParams } from '../types';
 import '../App.css';
@@ -30,7 +30,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
   // Mutually exclusive canvas overlay modes: original swaps in the source bitmap, paths shows
   // every traced edge in black on white (Illustrator's Outline view) — see CanvasGL.tsx.
@@ -97,6 +97,37 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
 
   const handleParamsChange = useCallback((patch: Partial<VectorizeParams>) => {
     setParams((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const handleSelectLayer = useCallback((ids: string[], mode: 'replace' | 'add' | 'toggle') => {
+    setSelectedLayerIds((prev) => {
+      if (mode === 'replace') return ids;
+      if (mode === 'add') return Array.from(new Set([...prev, ...ids]));
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      }
+      return Array.from(next);
+    });
+  }, []);
+
+  // Recolors every selected layer at once when the edited swatch belongs to a multi-layer
+  // selection, otherwise just the one layer whose swatch was clicked.
+  const handleChangeColor = useCallback(
+    (id: string, hex: string) => {
+      setLayers((prev) => {
+        const targets = selectedLayerIds.length > 1 && selectedLayerIds.includes(id) ? new Set(selectedLayerIds) : new Set([id]);
+        return prev.map((layer) => (targets.has(layer.id) ? setLayerFill(layer, hex) : layer));
+      });
+    },
+    [selectedLayerIds],
+  );
+
+  // Full-array replace from CanvasGL's gizmo drag (move/scale/rotate) — same shape as any other
+  // layer edit, so it flows through the existing per-layer diff effects in CanvasGL.
+  const handleTransformLayers = useCallback((next: Layer[]) => {
+    setLayers(next);
   }, []);
 
   const handleToggleVisible = useCallback((id: string) => {
@@ -171,8 +202,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           layers={layers}
           hoveredLayerId={hoveredLayerId}
           onHoverLayer={setHoveredLayerId}
-          selectedLayerId={selectedLayerId}
-          onSelectLayer={setSelectedLayerId}
+          selectedLayerIds={selectedLayerIds}
+          onSelectLayer={handleSelectLayer}
+          onTransformLayers={handleTransformLayers}
           showOriginal={showOriginal}
           showPaths={showPaths}
         />
@@ -180,10 +212,12 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           layers={layers}
           meta={meta}
           hoveredLayerId={hoveredLayerId}
-          selectedLayerId={selectedLayerId}
+          selectedLayerIds={selectedLayerIds}
           onToggleVisible={handleToggleVisible}
           onDelete={handleDeleteLayer}
           onHoverLayer={setHoveredLayerId}
+          onSelectLayer={handleSelectLayer}
+          onChangeColor={handleChangeColor}
         />
       </div>
       {error && <div className="toast toast--error">{error}</div>}

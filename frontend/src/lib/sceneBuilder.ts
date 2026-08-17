@@ -14,6 +14,10 @@ export interface SceneGeometry {
   outlineOther: Float32Array; // the segment's *other* endpoint, [x, y, ...] — lets the vertex shader compute a screen-space normal
   outlineSide: Float32Array; // -1 / +1, which side of the segment this vertex is extruded to
   outlineLayerIndices: Float32Array; // one value per vertex — index into `layers`
+  // One [minX, minY, maxX, maxY] per layer, in the same base world space as `positions` (i.e.
+  // *before* the layer's editable `transform` is applied) — used by CanvasGL's gizmo to place
+  // selection handles without re-triangulating.
+  layerBounds: Float32Array;
 }
 
 let colorCanvas: HTMLCanvasElement | null = null;
@@ -57,9 +61,25 @@ export function buildSceneGeometry(layers: Layer[]): SceneGeometry {
   const outlineOther: number[] = [];
   const outlineSide: number[] = [];
   const outlineLayerIndices: number[] = [];
+  const layerBounds: number[] = [];
 
   for (let i = 0; i < layers.length; i++) {
     const { triangulation, contours } = buildLayerGeometry(layers[i].attrs.d, layers[i].attrs.transform);
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const contour of contours) {
+      for (const [x, y] of contour) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    layerBounds.push(minX > maxX ? 0 : minX, minY > maxY ? 0 : minY, minX > maxX ? 0 : maxX, minY > maxY ? 0 : maxY);
+
     if (triangulation.positions.length > 0) {
       const base = positions.length / 2;
       for (const t of triangulation.indices) indices.push(base + t);
@@ -104,6 +124,7 @@ export function buildSceneGeometry(layers: Layer[]): SceneGeometry {
     outlineOther: new Float32Array(outlineOther),
     outlineSide: new Float32Array(outlineSide),
     outlineLayerIndices: new Float32Array(outlineLayerIndices),
+    layerBounds: new Float32Array(layerBounds),
   };
 }
 
@@ -120,4 +141,43 @@ export function buildPalette(layers: Layer[]): Uint8Array {
     palette.set(buildPaletteTexel(layers[i]), i * 4);
   }
   return palette;
+}
+
+/** Normalizes any CSS color string (hex, named, rgb(), ...) to `#rrggbb`, for the native color-input UI. */
+export function normalizeColorToHex(color: string): string {
+  const [r, g, b] = parseCssColor(color);
+  const toHex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * The two RGBA32F texels (a,b,c,d) and (e,f,0,0) encoding a layer's editable transform matrix —
+ * see CanvasGL.tsx's per-layer transform textures, sampled per-vertex to move/scale/rotate a
+ * layer without re-triangulating its path.
+ */
+export function buildTransformTexel(layer: Layer): { ab: Float32Array; ef: Float32Array } {
+  const [a, b, c, d, e, f] = layer.transform;
+  return { ab: new Float32Array([a, b, c, d]), ef: new Float32Array([e, f, 0, 0]) };
+}
+
+/** Flat (one texel per layer, pre-grid-layout) transform texture data for a full re-upload — see buildTransformTexel. */
+export function buildTransformArrays(layers: Layer[]): { ab: Float32Array; ef: Float32Array } {
+  const count = Math.max(1, layers.length);
+  const ab = new Float32Array(count * 4);
+  const ef = new Float32Array(count * 4);
+  for (let i = 0; i < layers.length; i++) {
+    const texel = buildTransformTexel(layers[i]);
+    ab.set(texel.ab, i * 4);
+    ef.set(texel.ef, i * 4);
+  }
+  return { ab, ef };
+}
+
+/** Flat (one texel per layer) R8 selection mask: 255 where the layer id is in `selectedIds`, else 0. */
+export function buildSelectionArray(layers: Layer[], selectedIds: ReadonlySet<string>): Uint8Array {
+  const selection = new Uint8Array(Math.max(1, layers.length));
+  for (let i = 0; i < layers.length; i++) {
+    selection[i] = selectedIds.has(layers[i].id) ? 255 : 0;
+  }
+  return selection;
 }

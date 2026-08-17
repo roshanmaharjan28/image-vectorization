@@ -1,3 +1,5 @@
+import type { Mat2x3 } from './lib/svgTransform';
+
 export interface SvgMeta {
   width: string;
   height: string;
@@ -12,6 +14,10 @@ export interface Layer {
   /** Soft-deleted layers stay in the array (so Canvas never has to rebuild its
    *  path list) but are hidden via CSS and excluded from the panel/export. */
   deleted: boolean;
+  /** Cumulative user-edit matrix (move/scale/rotate), applied on top of the already-triangulated
+   *  base geometry (`attrs.d` + `attrs.transform`) — identity until the user edits this layer. See
+   *  CanvasGL.tsx's per-layer transform texture for how this is applied without re-triangulating. */
+  transform: Mat2x3;
 }
 
 export type Stage = 'empty' | 'has-image' | 'vectorizing' | 'vectorized';

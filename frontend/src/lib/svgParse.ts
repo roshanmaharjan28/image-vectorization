@@ -1,4 +1,5 @@
 import type { Layer, SvgMeta } from '../types';
+import { IDENTITY } from './svgTransform';
 
 let nextLayerId = 0;
 
@@ -39,6 +40,7 @@ export function parseSvgToLayers(svgString: string): { meta: SvgMeta; layers: La
       attrs,
       visible: true,
       deleted: false,
+      transform: [...IDENTITY],
     };
   });
 

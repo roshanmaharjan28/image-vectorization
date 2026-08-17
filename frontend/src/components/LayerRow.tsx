@@ -1,6 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Layer, SvgMeta } from '../types';
 import { layerToPathMarkup } from '../lib/svgSerialize';
+import { normalizeColorToHex } from '../lib/sceneBuilder';
 
 interface Props {
   layer: Layer;
@@ -11,6 +13,8 @@ interface Props {
   onToggleVisible: (id: string) => void;
   onDelete: (id: string) => void;
   onHover: (id: string | null) => void;
+  onRowClick: (id: string, e: ReactMouseEvent) => void;
+  onChangeColor: (id: string, hex: string) => void;
 }
 
 export const LayerRow = memo(function LayerRow({
@@ -22,6 +26,8 @@ export const LayerRow = memo(function LayerRow({
   onToggleVisible,
   onDelete,
   onHover,
+  onRowClick,
+  onChangeColor,
 }: Props) {
   const thumbRef = useRef<SVGSVGElement>(null);
   const [thumbViewBox, setThumbViewBox] = useState<string | null>(null);
@@ -48,7 +54,16 @@ export const LayerRow = memo(function LayerRow({
       className={`layer-row${layer.visible ? '' : ' layer-row--hidden'}${isHovered ? ' layer-row--hovered' : ''}${isSelected ? ' layer-row--selected' : ''}`}
       onMouseEnter={() => onHover(layer.id)}
       onMouseLeave={() => onHover(null)}
+      onClick={(e) => onRowClick(layer.id, e)}
     >
+      <input
+        type="color"
+        className="layer-row__color-input"
+        title="Change layer color"
+        value={normalizeColorToHex(layer.fill)}
+        onChange={(e) => onChangeColor(layer.id, e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+      />
       {meta ? (
         <svg
           ref={thumbRef}
@@ -65,7 +80,10 @@ export const LayerRow = memo(function LayerRow({
         type="button"
         className="layer-row__action"
         title={layer.visible ? 'Hide layer' : 'Show layer'}
-        onClick={() => onToggleVisible(layer.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleVisible(layer.id);
+        }}
       >
         {layer.visible ? '👁' : '—'}
       </button>
@@ -73,7 +91,10 @@ export const LayerRow = memo(function LayerRow({
         type="button"
         className="layer-row__action layer-row__action--danger"
         title="Delete layer"
-        onClick={() => onDelete(layer.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(layer.id);
+        }}
       >
         🗑
       </button>
