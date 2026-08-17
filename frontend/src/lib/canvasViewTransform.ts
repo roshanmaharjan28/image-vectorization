@@ -32,6 +32,12 @@ export function clientToWorld(canvas: HTMLCanvasElement, view: ViewTransform, cl
   return [(pageX - view.offsetX) / view.scale + view.vbMinX, (pageY - view.offsetY) / view.scale + view.vbMinY];
 }
 
+/** World (viewBox) space -> page space (the `canvas__page` element's own pixel coordinates,
+ *  pre-CSS-zoom) — the forward direction of clientToWorld's mapping. */
+export function worldToPage(view: ViewTransform, x: number, y: number): [number, number] {
+  return [(x - view.vbMinX) * view.scale + view.offsetX, (y - view.vbMinY) * view.scale + view.offsetY];
+}
+
 export interface GizmoState {
   /** The 4 box corners (TL, TR, BR, BL) driving both handle placement and scale/rotate math —
    *  the layer's own (possibly rotated) corners for a single selection, or the axis-aligned union
@@ -129,10 +135,7 @@ export function computeGizmoState(
     ];
   }
 
-  const toPage = (x: number, y: number): [number, number] => [
-    (x - view.vbMinX) * view.scale + view.offsetX,
-    (y - view.vbMinY) * view.scale + view.offsetY,
-  ];
+  const toPage = (x: number, y: number): [number, number] => worldToPage(view, x, y);
   const pageCorners = worldCorners.map(([x, y]) => toPage(x, y));
   const center: [number, number] = [
     (worldCorners[0][0] + worldCorners[2][0]) / 2,

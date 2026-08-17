@@ -25,6 +25,9 @@ interface Options {
   showPaths: boolean;
   /** Current CSS zoom (see CanvasGL's pan/zoom state) — drives the backing-store resolution. */
   zoom: number;
+  /** Bumped by useCanvasPathEditing on every path-edit drag frame to force sceneGeometry to
+   *  re-triangulate — see that hook's class comment for why this can't just watch `layers`. */
+  geometryVersion: number;
 }
 
 /**
@@ -35,7 +38,7 @@ interface Options {
  * has to wire refs/state together and render JSX — see canvasGLEngine.ts for the underlying pure
  * GL calls this hook sequences.
  */
-export function useCanvasGLScene({ meta, layers, hoveredLayerId, selectedLayerIds, showPaths, zoom }: Options) {
+export function useCanvasGLScene({ meta, layers, hoveredLayerId, selectedLayerIds, showPaths, zoom, geometryVersion }: Options) {
   const [glUnsupported, setGlUnsupported] = useState(false);
   // Every edge is drawn blue right after a fresh vectorize, until the user clicks a path or
   // clicks anywhere else — mirrors a hover/select outline but for all layers at once.
@@ -74,8 +77,9 @@ export function useCanvasGLScene({ meta, layers, hoveredLayerId, selectedLayerId
 
   // Triangulating every layer's path is only worth redoing when the layer *set* changes — a
   // fresh vectorize — not on every visibility/transform/color toggle. Mirrors Canvas.tsx's
-  // pathsMarkup memo.
-  const sceneGeometry = useMemo(() => buildSceneGeometry(layers), [meta]); // eslint-disable-line react-hooks/exhaustive-deps
+  // pathsMarkup memo. `geometryVersion` is the deliberate exception: a path-edit drag
+  // (useCanvasPathEditing) changes a layer's actual `attrs.d`, which does need re-triangulating.
+  const sceneGeometry = useMemo(() => buildSceneGeometry(layers), [meta, geometryVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -108,11 +112,38 @@ export function useCanvasGLScene({ meta, layers, hoveredLayerId, selectedLayerId
     const hoverIndex = hoveredLayerId ? idMap.get(hoveredLayerId) ?? -1 : -1;
     renderScene(state, view, hoverIndex, selectedLayerIds.length > 0, true, showPaths, OUTLINE_WIDTH_CSS_PX * resolutionScale);
     renderPick(state, view);
-    // Only the fresh layer *set* (sceneGeometry) should retrigger the full GPU upload — hover/
+    // Only a fresh layer *set* (a new vectorize, i.e. `meta` itself changing) should retrigger this
+    // full reset (canvas resize, full texture re-uploads, the all-highlighted preview) — hover/
     // select/visibility/transform are handled by the cheaper effects below, same split as
-    // Canvas.tsx.
+    // Canvas.tsx. Deliberately keyed on `meta` rather than `sceneGeometry`: a path-edit drag also
+    // changes `sceneGeometry` (see its memo above) but must NOT re-run any of this — see the
+    // lightweight geometryVersion-only effect right below instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sceneGeometry]);
+  }, [meta]);
+
+  // Lightweight counterpart to the effect above, for path-edit drags: re-uploads just the
+  // triangulated geometry and redraws, without touching the canvas size, the palette/transform/
+  // selection textures (unaffected by a path edit), or the all-highlighted preview state.
+  useEffect(() => {
+    const state = glStateRef.current;
+    const canvas = canvasRef.current;
+    if (!state || !canvas || !meta || geometryVersion === 0) return;
+    uploadGeometry(state, sceneGeometry);
+    layerBoundsRef.current = sceneGeometry.layerBounds;
+    const view = computeViewTransform(meta);
+    const hoverIndex = hoveredLayerId ? layerIndexMapRef.current.get(hoveredLayerId) ?? -1 : -1;
+    renderScene(
+      state,
+      view,
+      hoverIndex,
+      selectedLayerIds.length > 0,
+      allHighlighted,
+      showPaths,
+      OUTLINE_WIDTH_CSS_PX * resolutionScaleRef.current,
+    );
+    renderPick(state, view);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometryVersion]);
 
   // Visibility/color/transform diff — identical shape to Canvas.tsx's data-hidden effect, but
   // writes a single palette + transform texel via texSubImage2D instead of toggling a DOM

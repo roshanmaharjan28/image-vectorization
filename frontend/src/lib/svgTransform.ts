@@ -84,6 +84,18 @@ export function isIdentityMatrix(m: Mat2x3): boolean {
   return m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0;
 }
 
+/** Standard 2x3 affine inverse — used to map a dragged path anchor's new world-space position
+ *  back into the path's own local coordinate space (see useCanvasPathEditing.ts). */
+export function invertMatrix([a, b, c, d, e, f]: Mat2x3): Mat2x3 {
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-12) return IDENTITY;
+  const ia = d / det;
+  const ib = -b / det;
+  const ic = -c / det;
+  const id = a / det;
+  return [ia, ib, ic, id, -(ia * e + ic * f), -(ib * e + id * f)];
+}
+
 /** Composes a pure translation onto the outside of `m` — i.e. moves the already-transformed shape by (dx, dy). */
 export function translateMatrix(m: Mat2x3, dx: number, dy: number): Mat2x3 {
   return multiply([1, 0, 0, 1, dx, dy], m);

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Layer, SvgMeta } from '../types';
 import { ROTATE_CURSOR, computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
 import { useCanvasGLScene } from '../hooks/useCanvasGLScene';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
+import { useCanvasPathEditing } from '../hooks/useCanvasPathEditing';
 
 interface Props {
   imageUrl: string | null;
@@ -61,6 +63,10 @@ export function CanvasGL({
   // transform below, and useCanvasInteractions only needs to read/update it.
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  // Bumped by useCanvasPathEditing on every path-edit drag frame to force a re-triangulation —
+  // owned here (rather than by either hook) since useCanvasGLScene needs it as an input while
+  // useCanvasPathEditing needs useCanvasGLScene's canvasRef/pickLayerIndexAt as its own input.
+  const [geometryVersion, setGeometryVersion] = useState(0);
 
   const isVectorized = meta !== null;
   const view = meta ? computeViewTransform(meta) : null;
@@ -72,7 +78,18 @@ export function CanvasGL({
     selectedLayerIds,
     showPaths,
     zoom: scale,
+    geometryVersion,
   });
+
+  const { editingLayerId, pathAnchors, handleCanvasDoubleClick, handleAnchorMouseDown, pathEditingWrapperHandlers } =
+    useCanvasPathEditing({
+      view,
+      layers,
+      onTransformLayers,
+      canvasRef,
+      pickLayerIndexAt,
+      onPathEdited: () => setGeometryVersion((v) => v + 1),
+    });
 
   const gizmo = useMemo(
     () => computeGizmoState(view, selectedLayerIds, layers, layerIndexMapRef.current, layerBoundsRef.current),
@@ -104,8 +121,28 @@ export function CanvasGL({
       ]
     : null;
 
+  // A path-edit anchor drag shares the same wrapper element as the pan/gizmo drags, but is its own
+  // independent state machine (handleAnchorMouseDown always stops propagation, so the two never
+  // fire for the same gesture) — compose both hooks' handlers rather than threading edit state
+  // through useCanvasInteractions.
+  const combinedWrapperHandlers = {
+    ...wrapperHandlers,
+    onMouseMove: (e: ReactMouseEvent<HTMLDivElement>) => {
+      wrapperHandlers.onMouseMove(e);
+      pathEditingWrapperHandlers.onMouseMove(e);
+    },
+    onMouseUp: () => {
+      wrapperHandlers.onMouseUp();
+      pathEditingWrapperHandlers.onMouseUp();
+    },
+    onMouseLeave: () => {
+      wrapperHandlers.onMouseLeave();
+      pathEditingWrapperHandlers.onMouseUp();
+    },
+  };
+
   return (
-    <div className="canvas" ref={wrapperRef} {...wrapperHandlers}>
+    <div className="canvas" ref={wrapperRef} {...combinedWrapperHandlers}>
       <div
         className="canvas__artboard"
         style={{
@@ -118,7 +155,7 @@ export function CanvasGL({
               <div className="canvas__surface canvas__gl-error">WebGL2 is not supported in this browser.</div>
             ) : (
               <>
-                <canvas ref={canvasRef} className="canvas__surface" {...canvasHandlers} />
+                <canvas ref={canvasRef} className="canvas__surface" {...canvasHandlers} onDoubleClick={handleCanvasDoubleClick} />
                 {showOriginal && imageUrl && (
                   <img
                     src={imageUrl}
@@ -126,7 +163,26 @@ export function CanvasGL({
                     className="canvas__surface canvas__image canvas__bitmap-overlay"
                   />
                 )}
-                {gizmo && rotateHandlePage && !showOriginal && view && (
+                {editingLayerId && pathAnchors && !showOriginal && view && (
+                  <svg
+                    className="canvas__path-edit"
+                    width={view.width}
+                    height={view.height}
+                    viewBox={`0 0 ${view.width} ${view.height}`}
+                  >
+                    {pathAnchors.map(({ anchor, page }) => (
+                      <circle
+                        key={anchor.id}
+                        className="canvas__path-anchor"
+                        cx={page[0]}
+                        cy={page[1]}
+                        r={HANDLE_RADIUS_PX / scale}
+                        onMouseDown={(e) => handleAnchorMouseDown(e, anchor)}
+                      />
+                    ))}
+                  </svg>
+                )}
+                {gizmo && rotateHandlePage && !showOriginal && view && !editingLayerId && (
                   <svg
                     className="canvas__gizmo"
                     width={view.width}

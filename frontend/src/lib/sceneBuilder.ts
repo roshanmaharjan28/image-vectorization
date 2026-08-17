@@ -1,5 +1,22 @@
 import type { Layer } from '../types';
-import { buildLayerGeometry } from './triangulateLayer';
+import { buildLayerGeometry, type LayerGeometry } from './triangulateLayer';
+
+// Per-layer triangulation is expensive (flattenPathToContours walks the DOM's
+// SVGPathElement.getPointAtLength for every subpath) and buildSceneGeometry reruns for the whole
+// layer set on every path-edit drag frame (see useCanvasGLScene's geometryVersion). Since a drag
+// only ever replaces the edited layer's `attrs` object (see useCanvasPathEditing), every other
+// layer's `attrs` reference is stable frame-to-frame — cache each layer's geometry by that
+// reference so a drag only re-triangulates the one shape actually changing, instead of the whole
+// scene every frame. Entries are dropped automatically once a layer's `attrs` is replaced.
+const layerGeometryCache = new WeakMap<Layer['attrs'], LayerGeometry>();
+
+function buildLayerGeometryCached(layer: Layer): LayerGeometry {
+  const cached = layerGeometryCache.get(layer.attrs);
+  if (cached) return cached;
+  const geometry = buildLayerGeometry(layer.attrs.d, layer.attrs.transform);
+  layerGeometryCache.set(layer.attrs, geometry);
+  return geometry;
+}
 
 export interface SceneGeometry {
   positions: Float32Array; // [x, y, x, y, ...] in viewBox space
@@ -64,7 +81,7 @@ export function buildSceneGeometry(layers: Layer[]): SceneGeometry {
   const layerBounds: number[] = [];
 
   for (let i = 0; i < layers.length; i++) {
-    const { triangulation, contours } = buildLayerGeometry(layers[i].attrs.d, layers[i].attrs.transform);
+    const { triangulation, contours } = buildLayerGeometryCached(layers[i]);
 
     let minX = Infinity;
     let minY = Infinity;
