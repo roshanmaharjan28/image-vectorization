@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import type { Layer, SvgMeta } from '../types';
+import type { Layer, SvgMeta, Tool } from '../types';
 import { ROTATE_CURSOR, computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
 import { useCanvasGLScene } from '../hooks/useCanvasGLScene';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
@@ -26,6 +26,9 @@ interface Props {
   // Adobe Illustrator "Outline" view: renders every path as a black stroke on a white page
   // instead of its fill color — see useCanvasGLScene/canvasGLEngine's renderScene.
   showPaths: boolean;
+  // 'cursor' selects/moves/scales/rotates/path-edits elements as usual; 'hand' turns every drag
+  // into a pan and disables hover/selection/gizmo/path-edit entirely.
+  tool: Tool;
 }
 
 // Gizmo handle sizing, in constant screen pixels (divided by the current CSS zoom `scale` at
@@ -57,6 +60,7 @@ export function CanvasGL({
   onTransformLayers,
   showOriginal,
   showPaths,
+  tool,
 }: Props) {
   // CSS pan/zoom for the artboard wrapper — lives here (rather than inside a hook) since it's
   // needed both by useCanvasGLScene (to pick the GL backing-store resolution) and by the JSX
@@ -99,8 +103,9 @@ export function CanvasGL({
     [layers, selectedLayerIds, meta, sceneGeometry],
   );
 
-  const { wrapperRef, wrapperHandlers, canvasHandlers, handleGizmoHandleMouseDown } = useCanvasInteractions({
+  const { wrapperRef, wrapperHandlers, canvasHandlers, handleGizmoHandleMouseDown, suppressNextClickRef } = useCanvasInteractions({
     view,
+    tool,
     layers,
     selectedLayerIds,
     onSelectLayer,
@@ -113,6 +118,17 @@ export function CanvasGL({
     offset,
     setOffset,
   });
+
+  // Pen tool: a plain click reaches the same path-edit entry point 'cursor' reaches via
+  // double-click. Guarded by suppressNextClickRef so a pan drag (which still ends in a click,
+  // since mousedown/mouseup land on the same canvas element) doesn't also toggle path-edit.
+  function handlePenClick(e: ReactMouseEvent<HTMLCanvasElement>) {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    handleCanvasDoubleClick(e);
+  }
 
   const rotateHandlePage: [number, number] | null = gizmo
     ? [
@@ -142,7 +158,11 @@ export function CanvasGL({
   };
 
   return (
-    <div className="canvas" ref={wrapperRef} {...combinedWrapperHandlers}>
+    <div
+      className={`canvas${tool === 'hand' ? ' canvas--hand' : ''}${tool === 'pen' ? ' canvas--pen' : ''}`}
+      ref={wrapperRef}
+      {...combinedWrapperHandlers}
+    >
       <div
         className="canvas__artboard"
         style={{
@@ -155,7 +175,13 @@ export function CanvasGL({
               <div className="canvas__surface canvas__gl-error">WebGL2 is not supported in this browser.</div>
             ) : (
               <>
-                <canvas ref={canvasRef} className="canvas__surface" {...canvasHandlers} onDoubleClick={handleCanvasDoubleClick} />
+                <canvas
+                  ref={canvasRef}
+                  className="canvas__surface"
+                  {...canvasHandlers}
+                  onClick={tool === 'pen' ? handlePenClick : canvasHandlers.onClick}
+                  onDoubleClick={tool === 'cursor' ? handleCanvasDoubleClick : undefined}
+                />
                 {showOriginal && imageUrl && (
                   <img
                     src={imageUrl}
@@ -163,7 +189,7 @@ export function CanvasGL({
                     className="canvas__surface canvas__image canvas__bitmap-overlay"
                   />
                 )}
-                {editingLayerId && pathAnchors && !showOriginal && view && (
+                {tool !== 'hand' && editingLayerId && pathAnchors && !showOriginal && view && (
                   <svg
                     className="canvas__path-edit"
                     width={view.width}
@@ -182,7 +208,7 @@ export function CanvasGL({
                     ))}
                   </svg>
                 )}
-                {gizmo && rotateHandlePage && !showOriginal && view && !editingLayerId && (
+                {tool === 'cursor' && gizmo && rotateHandlePage && !showOriginal && view && !editingLayerId && (
                   <svg
                     className="canvas__gizmo"
                     width={view.width}

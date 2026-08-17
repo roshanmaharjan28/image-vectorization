@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import type { Dispatch, MouseEvent as ReactMouseEvent, RefObject, SetStateAction, WheelEvent as ReactWheelEvent } from 'react';
-import type { Layer } from '../types';
+import type { Layer, Tool } from '../types';
 import { ROTATE_CURSOR, clientToWorld, cornerResizeCursor, type GizmoState, type ViewTransform } from '../lib/canvasViewTransform';
 import { rotateAroundPivot, scaleAroundPivot, type Mat2x3 } from '../lib/svgTransform';
 
@@ -24,6 +24,10 @@ interface DragInfo {
 
 interface Options {
   view: ViewTransform | null;
+  // 'hand' disables every element interaction below (hover, select, move/scale/rotate) — only
+  // the wrapper's drag-to-pan stays live, so a hand-tool drag always pans regardless of what's
+  // under the pointer.
+  tool: Tool;
   layers: Layer[];
   selectedLayerIds: string[];
   onSelectLayer: (ids: string[], mode: 'replace' | 'add' | 'toggle') => void;
@@ -48,6 +52,7 @@ interface Options {
  */
 export function useCanvasInteractions({
   view,
+  tool,
   layers,
   selectedLayerIds,
   onSelectLayer,
@@ -205,7 +210,7 @@ export function useCanvasInteractions({
     e.stopPropagation();
     e.preventDefault();
     const canvas = canvasRef.current;
-    if (!canvas || !view || !gizmo) return;
+    if (tool !== 'cursor' || !canvas || !view || !gizmo) return;
     const startWorld = clientToWorld(canvas, view, e.clientX, e.clientY);
     const initialTransforms = snapshotInitialTransforms();
     if (mode === 'scale' && cornerIndex !== undefined) {
@@ -236,6 +241,7 @@ export function useCanvasInteractions({
   }
 
   function handleCanvasMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
+    if (tool !== 'cursor') return;
     const canvas = canvasRef.current;
     if (!canvas || !view) return;
     const idx = pickLayerIndexAt(e.clientX, e.clientY);
@@ -253,10 +259,12 @@ export function useCanvasInteractions({
   }
 
   function handleCanvasMouseMove(e: ReactMouseEvent<HTMLCanvasElement>) {
+    if (tool !== 'cursor') return;
     schedulePickAt(e.clientX, e.clientY);
   }
 
   function handleCanvasClick(e: ReactMouseEvent<HTMLCanvasElement>) {
+    if (tool !== 'cursor') return;
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false;
       return;
@@ -288,5 +296,9 @@ export function useCanvasInteractions({
       onClick: handleCanvasClick,
     },
     handleGizmoHandleMouseDown,
+    // Exposed so the pen tool's click-to-path-edit handler can also skip the click that follows a
+    // real pan drag — stopDrag() already flips this on mouseup, handleCanvasClick just happens to
+    // be the only consumer today.
+    suppressNextClickRef,
   };
 }

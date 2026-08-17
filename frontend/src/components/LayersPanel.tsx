@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Layer, SvgMeta } from '../types';
 import { LayerRow } from './LayerRow';
+import { Badge } from './ui/badge';
 
 interface Props {
   layers: Layer[];
@@ -18,7 +19,7 @@ interface Props {
   onChangeColor: (id: string, hex: string) => void;
 }
 
-// Must match the rendered height of `.layer-row` in App.css.
+// Must match the rendered height of the row in LayerRow.tsx.
 const ROW_HEIGHT = 45;
 const OVERSCAN = 6;
 
@@ -87,22 +88,24 @@ export function LayersPanel({
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <aside className="layers-panel">
-      <div className="layers-panel__header">
+    <aside className="flex w-65 shrink-0 flex-col border-l border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         <span>Layers</span>
-        <span className="layers-panel__count">{total}</span>
+        <Badge variant="secondary">{total}</Badge>
       </div>
-      <div className="layers-panel__list" ref={listRef}>
+      <div className="relative flex-1 overflow-y-auto" ref={listRef}>
         {total === 0 && (
-          <p className="layers-panel__empty">No layers left. Vectorize an image or undo deletions by re-vectorizing.</p>
+          <p className="p-4 text-sm leading-relaxed text-muted-foreground">
+            No layers left. Vectorize an image or undo deletions by re-vectorizing.
+          </p>
         )}
-        <div className="layers-panel__scroller" style={{ height: virtualizer.getTotalSize() }}>
+        <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
           {virtualItems.map((virtualRow) => {
             const layer = orderedLayers[virtualRow.index];
             return (
               <div
                 key={layer.id}
-                className="layers-panel__row"
+                className="absolute right-0 left-0 box-border"
                 style={{ top: virtualRow.start, height: virtualRow.size }}
               >
                 <LayerRow

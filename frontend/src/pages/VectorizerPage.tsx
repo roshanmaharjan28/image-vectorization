@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { toast } from 'sonner';
 import { UploadDropzone } from '../components/UploadDropzone';
 import { Toolbar } from '../components/Toolbar';
 // Canvas.tsx (SVG/DOM renderer) is kept around, just swapped out here — CanvasGL.tsx is an
@@ -10,7 +11,7 @@ import { ParamsPanel } from '../components/ParamsPanel';
 import { parseSvgToLayers } from '../lib/svgParse';
 import { buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
-import type { Layer, Stage, SvgMeta, VectorizeParams } from '../types';
+import type { Layer, Stage, SvgMeta, Tool, VectorizeParams } from '../types';
 import '../App.css';
 import { CanvasGL } from '../components/CanvasGL';
 
@@ -34,11 +35,11 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<SvgMeta | null>(null);
   const [layers, setLayers] = useState<Layer[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
+  const [tool, setTool] = useState<Tool>('cursor');
 
   function handleToggleShowOriginal() {
     setOverlayMode((mode) => (mode === 'original' ? 'none' : 'original'));
@@ -54,7 +55,6 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageUrl(URL.createObjectURL(file));
     setMeta(null);
     setLayers([]);
-    setError(null);
     setOverlayMode('none');
     setStage('has-image');
   }
@@ -62,7 +62,6 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   async function handleVectorize() {
     if (!imageFile) return;
     setStage('vectorizing');
-    setError(null);
     setOverlayMode('none');
 
     try {
@@ -83,7 +82,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       setLayers(parsed.layers);
       setStage('vectorized');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Vectorization failed');
+      toast.error(err instanceof Error ? err.message : 'Vectorization failed');
       setStage('has-image');
     }
   }
@@ -152,14 +151,13 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageUrl(null);
     setMeta(null);
     setLayers([]);
-    setError(null);
     setOverlayMode('none');
     setStage('empty');
   }
 
   if (stage === 'empty') {
     return (
-      <div className="app app--empty">
+      <div className="flex h-full flex-col items-center justify-center">
         <UploadDropzone onSelect={handleImageSelected} />
       </div>
     );
@@ -169,7 +167,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const showPaths = overlayMode === 'paths';
 
   return (
-    <div className="app">
+    <div className="flex h-full flex-col">
       <Toolbar
         stage={stage}
         fileName={imageFile?.name}
@@ -180,29 +178,34 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
         onToggleShowOriginal={handleToggleShowOriginal}
         showPaths={showPaths}
         onToggleShowPaths={handleToggleShowPaths}
+        tool={tool}
+        onToolChange={setTool}
       />
-      <div className="app__body">
-        {showParams && (
-          <ParamsPanel
-            params={params}
-            onChange={handleParamsChange}
-            onRevectorize={handleVectorize}
-            canRevectorize={Boolean(imageFile)}
-            isVectorizing={stage === 'vectorizing'}
+      <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
+          <CanvasGL
+            imageUrl={imageUrl}
+            meta={meta}
+            layers={layers}
+            hoveredLayerId={hoveredLayerId}
+            onHoverLayer={setHoveredLayerId}
+            selectedLayerIds={selectedLayerIds}
+            onSelectLayer={handleSelectLayer}
+            onTransformLayers={handleTransformLayers}
+            showOriginal={showOriginal}
+            showPaths={showPaths}
+            tool={tool}
           />
-        )}
-        <CanvasGL
-          imageUrl={imageUrl}
-          meta={meta}
-          layers={layers}
-          hoveredLayerId={hoveredLayerId}
-          onHoverLayer={setHoveredLayerId}
-          selectedLayerIds={selectedLayerIds}
-          onSelectLayer={handleSelectLayer}
-          onTransformLayers={handleTransformLayers}
-          showOriginal={showOriginal}
-          showPaths={showPaths}
-        />
+          {showParams && (
+            <ParamsPanel
+              params={params}
+              onChange={handleParamsChange}
+              onRevectorize={handleVectorize}
+              canRevectorize={Boolean(imageFile)}
+              isVectorizing={stage === 'vectorizing'}
+            />
+          )}
+        </div>
         <LayersPanel
           layers={layers}
           meta={meta}
@@ -215,7 +218,6 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onChangeColor={handleChangeColor}
         />
       </div>
-      {error && <div className="toast toast--error">{error}</div>}
     </div>
   );
 }

@@ -22,6 +22,11 @@ export interface Layer {
 
 export type Stage = 'empty' | 'has-image' | 'vectorizing' | 'vectorized';
 
+// 'cursor' interacts with canvas elements (select/move/scale/rotate/path-edit); 'hand' only pans
+// the canvas, ignoring whatever's under the pointer; 'pen' clicks a layer straight into path-edit
+// mode (the same entry point 'cursor' reaches via double-click).
+export type Tool = 'cursor' | 'hand' | 'pen';
+
 // vtracer-facing params, shared by v1 (raw vtracer call) and v3 (preprocess +
 // vtracer — see backend/app/v3/params.py, whose preprocessing fields aren't
 // exposed here since there's no UI control for them yet).
