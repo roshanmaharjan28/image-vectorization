@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.grouping.router_support import finalize_vectorize_response
 from app.v2.router import router as v2_router
 from app.v3.router import router as v3_router
 
@@ -54,30 +55,39 @@ def vectorize(
     corner_threshold: int = Form(45, ge=0, le=180),
     length_threshold: float = Form(3.5, ge=3.5, le=10),
     splice_threshold: int = Form(30, ge=0, le=180),
+    grouping: Literal["none", "opencv", "fastsam"] = Form("none"),
 ):
     img_format = _resolve_format(image.filename, image.content_type)
     img_bytes = image.file.read()
     if not img_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
+    vtracer_kwargs = dict(
+        colormode=colormode,
+        hierarchical=hierarchical,
+        mode=mode,
+        filter_speckle=filter_speckle,
+        color_precision=color_precision,
+        layer_difference=layer_difference,
+        corner_threshold=corner_threshold,
+        length_threshold=length_threshold,
+        splice_threshold=splice_threshold,
+    )
+
+    def plain_vectorize() -> str:
+        return vtracer.convert_raw_image_to_svg(img_bytes, img_format=img_format, **vtracer_kwargs)
+
     try:
-        svg = vtracer.convert_raw_image_to_svg(
-            img_bytes,
-            img_format=img_format,
-            colormode=colormode,
-            hierarchical=hierarchical,
-            mode=mode,
-            filter_speckle=filter_speckle,
-            color_precision=color_precision,
-            layer_difference=layer_difference,
-            corner_threshold=corner_threshold,
-            length_threshold=length_threshold,
-            splice_threshold=splice_threshold,
+        return finalize_vectorize_response(
+            image_bytes=img_bytes,
+            grouping=grouping,
+            vtracer_kwargs=vtracer_kwargs,
+            plain_vectorize=plain_vectorize,
         )
+    except HTTPException:
+        raise
     except Exception as exc:  # vtracer raises plain exceptions on decode/trace failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc
-
-    return {"svg": svg}
 
 
 @app.get("/api/health")

@@ -3,8 +3,10 @@ from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.grouping.router_support import finalize_vectorize_response
+
 from .params import VectorizeParamsV3
-from .pipeline import vectorize_image_v3
+from .pipeline import quantize_for_v3, vectorize_image_v3
 
 router = APIRouter()
 
@@ -36,6 +38,7 @@ def vectorize_v3(
     corner_threshold: int = Form(_DEFAULTS.corner_threshold, ge=0, le=180),
     length_threshold: float = Form(_DEFAULTS.length_threshold, ge=3.5, le=10),
     splice_threshold: int = Form(_DEFAULTS.splice_threshold, ge=0, le=180),
+    grouping: Literal["none", "opencv", "fastsam"] = Form("none"),
 ):
     _validate_image_format(image.filename, image.content_type)
 
@@ -55,11 +58,35 @@ def vectorize_v3(
         splice_threshold=splice_threshold,
     )
 
+    vtracer_kwargs = dict(
+        colormode=params.colormode,
+        mode=params.mode,
+        hierarchical=params.hierarchical,
+        filter_speckle=params.filter_speckle,
+        color_precision=params.color_precision,
+        layer_difference=params.layer_difference,
+        corner_threshold=params.corner_threshold,
+        length_threshold=params.length_threshold,
+        splice_threshold=params.splice_threshold,
+    )
+
+    def plain_vectorize() -> str:
+        return vectorize_image_v3(img_bytes, params)
+
+    def quantized_source_provider():
+        return quantize_for_v3(img_bytes, params)
+
     try:
-        svg = vectorize_image_v3(img_bytes, params)
+        return finalize_vectorize_response(
+            image_bytes=img_bytes,
+            grouping=grouping,
+            vtracer_kwargs=vtracer_kwargs,
+            plain_vectorize=plain_vectorize,
+            quantized_source_provider=quantized_source_provider,
+        )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pipeline or vtracer failure
         raise HTTPException(status_code=500, detail=f"Vectorization failed: {exc}") from exc
-
-    return {"svg": svg}
