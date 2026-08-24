@@ -22,6 +22,27 @@ export interface Layer {
 
 export type Stage = 'empty' | 'has-image' | 'vectorizing' | 'vectorized';
 
+// Mirrors the backend's grouping response schema exactly (see backend/app/grouping/schema.py's
+// serialize_node) — no field-name translation between wire format and frontend type.
+export interface LeafRef {
+  type: 'leaf';
+  index: number; // index into the SVG's <path> document order, 1:1 with Layer[] array order
+}
+
+export interface GroupNode {
+  type: 'group';
+  id: string;
+  label: string | null;
+  children: TreeNode[];
+}
+
+export type TreeNode = LeafRef | GroupNode;
+
+// 'none' skips grouping entirely (default, byte-identical to pre-grouping behavior); 'opencv' and
+// 'fastsam' select which backend engine computes the `groups` forest. Only meaningful for v1/v3 —
+// v2 has no grouping support (see backend/app/grouping's README-equivalent in the plan doc).
+export type GroupingMode = 'none' | 'opencv' | 'fastsam';
+
 // 'cursor' interacts with canvas elements (select/move/scale/rotate/path-edit); 'hand' only pans
 // the canvas, ignoring whatever's under the pointer; 'pen' clicks a layer straight into path-edit
 // mode (the same entry point 'cursor' reaches via double-click).

@@ -8,10 +8,12 @@ import { Toolbar } from '../components/Toolbar';
 // import { CanvasGL } from '../components/CanvasGL';
 import { LayersPanel } from '../components/LayersPanel';
 import { ParamsPanel } from '../components/ParamsPanel';
+import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
 import { buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
-import type { Layer, Stage, SvgMeta, Tool, VectorizeParams } from '../types';
+import { downloadTextFile } from '../lib/download';
+import type { GroupingMode, Layer, Stage, SvgMeta, Tool, TreeNode, VectorizeParams } from '../types';
 import '../App.css';
 import { CanvasGL } from '../components/CanvasGL';
 
@@ -35,6 +37,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<SvgMeta | null>(null);
   const [layers, setLayers] = useState<Layer[]>([]);
+  const [groupTree, setGroupTree] = useState<TreeNode[] | null>(null);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
+  const [grouping, setGrouping] = useState<GroupingMode>('none');
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
@@ -55,6 +60,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageUrl(URL.createObjectURL(file));
     setMeta(null);
     setLayers([]);
+    setGroupTree(null);
+    setCollapsedGroupIds(new Set());
     setOverlayMode('none');
     setStage('has-image');
   }
@@ -67,7 +74,10 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
-      if (showParams) appendVectorizeParams(formData, params);
+      if (showParams) {
+        appendVectorizeParams(formData, params);
+        formData.append('grouping', grouping);
+      }
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiUrl}${apiEndpoint}`, { method: 'POST', body: formData });
 
@@ -76,10 +86,12 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
         throw new Error(body?.detail ?? `Request failed with status ${res.status}`);
       }
 
-      const data: { svg: string } = await res.json();
+      const data: { svg: string; groups?: TreeNode[] | null } = await res.json();
       const parsed = parseSvgToLayers(data.svg);
       setMeta(parsed.meta);
       setLayers(parsed.layers);
+      setGroupTree(data.groups ?? null);
+      setCollapsedGroupIds(new Set());
       setStage('vectorized');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Vectorization failed');
@@ -133,17 +145,48 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: false, deleted: true } : l)));
   }, []);
 
+  // Batch versions of the two setters above, used by a group row's eye/trash actions (which
+  // cascade to every descendant leaf, nested subgroups included) — also reusable unchanged by a
+  // future manual multi-select "hide/delete selection" action.
+  const handleSetVisibleMany = useCallback((ids: string[], visible: boolean) => {
+    setLayers((prev) => {
+      const idSet = new Set(ids);
+      return prev.map((l) => (idSet.has(l.id) ? { ...l, visible } : l));
+    });
+  }, []);
+
+  const handleDeleteMany = useCallback((ids: string[]) => {
+    setLayers((prev) => {
+      const idSet = new Set(ids);
+      return prev.map((l) => (idSet.has(l.id) ? { ...l, visible: false, deleted: true } : l));
+    });
+  }, []);
+
+  const handleToggleGroupCollapsed = useCallback((id: string) => {
+    setCollapsedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   function handleDownload() {
     if (!meta) return;
     const svgString = buildSvgString(meta, layers);
-    const blob = new Blob([svgString], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${imageFile?.name.replace(/\.[^.]+$/, '') || 'vectorized'}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(svgString, `${imageFile?.name.replace(/\.[^.]+$/, '') || 'vectorized'}.svg`);
   }
+
+  const handleDownloadGroup = useCallback(
+    (leafIds: string[], label: string) => {
+      if (!meta) return;
+      const idSet = new Set(leafIds);
+      const subset = layers.filter((l) => idSet.has(l.id));
+      const svgString = buildSvgString(meta, subset);
+      downloadTextFile(svgString, `${label.replace(/[^\w-]+/g, '_') || 'group'}.svg`);
+    },
+    [meta, layers],
+  );
 
   function handleReset() {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
@@ -151,6 +194,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageUrl(null);
     setMeta(null);
     setLayers([]);
+    setGroupTree(null);
+    setCollapsedGroupIds(new Set());
     setOverlayMode('none');
     setStage('empty');
   }
@@ -197,18 +242,23 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             tool={tool}
           />
           {showParams && (
-            <ParamsPanel
-              params={params}
-              onChange={handleParamsChange}
-              onRevectorize={handleVectorize}
-              canRevectorize={Boolean(imageFile)}
-              isVectorizing={stage === 'vectorizing'}
-            />
+            <>
+              <GroupingSelector value={grouping} onChange={setGrouping} disabled={stage === 'vectorizing'} />
+              <ParamsPanel
+                params={params}
+                onChange={handleParamsChange}
+                onRevectorize={handleVectorize}
+                canRevectorize={Boolean(imageFile)}
+                isVectorizing={stage === 'vectorizing'}
+              />
+            </>
           )}
         </div>
         <LayersPanel
           layers={layers}
           meta={meta}
+          groupTree={groupTree}
+          collapsedGroupIds={collapsedGroupIds}
           hoveredLayerId={hoveredLayerId}
           selectedLayerIds={selectedLayerIds}
           onToggleVisible={handleToggleVisible}
@@ -216,6 +266,10 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onHoverLayer={setHoveredLayerId}
           onSelectLayer={handleSelectLayer}
           onChangeColor={handleChangeColor}
+          onToggleGroupCollapsed={handleToggleGroupCollapsed}
+          onSetVisibleMany={handleSetVisibleMany}
+          onDeleteMany={handleDeleteMany}
+          onDownloadGroup={handleDownloadGroup}
         />
       </div>
     </div>

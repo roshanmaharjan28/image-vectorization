@@ -4,25 +4,30 @@ import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { Layer, SvgMeta } from '../types';
 import { layerToPathMarkup } from '../lib/svgSerialize';
 import { normalizeColorToHex } from '../lib/sceneBuilder';
+import { ROW_BASE_PADDING_PX, ROW_INDENT_PX } from '../lib/groupTree';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 
 interface Props {
   layer: Layer;
   index: number;
+  depth: number;
+  rowIndex: number;
   meta: SvgMeta | null;
   isHovered: boolean;
   isSelected: boolean;
   onToggleVisible: (id: string) => void;
   onDelete: (id: string) => void;
   onHover: (id: string | null) => void;
-  onRowClick: (id: string, e: ReactMouseEvent) => void;
+  onRowClick: (rowIndex: number, e: ReactMouseEvent) => void;
   onChangeColor: (id: string, hex: string) => void;
 }
 
 export const LayerRow = memo(function LayerRow({
   layer,
   index,
+  depth,
+  rowIndex,
   meta,
   isHovered,
   isSelected,
@@ -55,14 +60,15 @@ export const LayerRow = memo(function LayerRow({
   return (
     <div
       className={cn(
-        'box-border flex h-full items-center gap-2.5 border-b border-border px-4',
+        'box-border flex h-full items-center gap-2.5 border-b border-border pr-4',
         !layer.visible && 'opacity-45',
         isHovered && 'bg-muted',
         isSelected && 'bg-muted shadow-[inset_3px_0_0_var(--primary)]',
       )}
+      style={{ paddingLeft: ROW_BASE_PADDING_PX + depth * ROW_INDENT_PX }}
       onMouseEnter={() => onHover(layer.id)}
       onMouseLeave={() => onHover(null)}
-      onClick={(e) => onRowClick(layer.id, e)}
+      onClick={(e) => onRowClick(rowIndex, e)}
     >
       <input
         type="color"

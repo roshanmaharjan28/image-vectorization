@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { Layer, SvgMeta } from '../types';
+import type { Layer, SvgMeta, TreeNode } from '../types';
+import { buildPanelRows, idsForRow } from '../lib/groupTree';
 import { LayerRow } from './LayerRow';
+import { GroupRow } from './GroupRow';
 import { Badge } from './ui/badge';
 
 interface Props {
   layers: Layer[];
   meta: SvgMeta | null;
+  groupTree: TreeNode[] | null;
+  collapsedGroupIds: Set<string>;
   hoveredLayerId: string | null;
   selectedLayerIds: string[];
   onToggleVisible: (id: string) => void;
@@ -17,15 +21,21 @@ interface Props {
   // xors a single id (ctrl/cmd-click) — mirrors CanvasGL's onSelectLayer.
   onSelectLayer: (ids: string[], mode: 'replace' | 'add' | 'toggle') => void;
   onChangeColor: (id: string, hex: string) => void;
+  onToggleGroupCollapsed: (id: string) => void;
+  onSetVisibleMany: (ids: string[], visible: boolean) => void;
+  onDeleteMany: (ids: string[]) => void;
+  onDownloadGroup: (leafIds: string[], label: string) => void;
 }
 
-// Must match the rendered height of the row in LayerRow.tsx.
+// Must match the rendered height of both LayerRow.tsx and GroupRow.tsx.
 const ROW_HEIGHT = 45;
 const OVERSCAN = 6;
 
 export function LayersPanel({
   layers,
   meta,
+  groupTree,
+  collapsedGroupIds,
   hoveredLayerId,
   selectedLayerIds,
   onToggleVisible,
@@ -33,33 +43,37 @@ export function LayersPanel({
   onHoverLayer,
   onSelectLayer,
   onChangeColor,
+  onToggleGroupCollapsed,
+  onSetVisibleMany,
+  onDeleteMany,
+  onDownloadGroup,
 }: Props) {
-  const orderedLayers = useMemo(
-    () => layers.filter((l) => !l.deleted).reverse(),
-    [layers],
+  const rows = useMemo(
+    () => buildPanelRows(groupTree, layers, collapsedGroupIds),
+    [groupTree, layers, collapsedGroupIds],
   );
-  const total = orderedLayers.length;
+  const totalLayerCount = useMemo(() => layers.filter((l) => !l.deleted).length, [layers]);
   const selectedIdSet = useMemo(() => new Set(selectedLayerIds), [selectedLayerIds]);
 
-  // Shift-click range anchor — the index (in `orderedLayers`) of the last plain/ctrl click,
-  // extended (not reset) by subsequent shift-clicks so repeated shift-clicks keep growing the same
-  // range, matching standard file-list selection behavior.
+  // Shift-click range anchor — the index (in `rows`) of the last plain/ctrl click, extended (not
+  // reset) by subsequent shift-clicks so repeated shift-clicks keep growing the same range,
+  // matching standard file-list selection behavior.
   const lastSelectedIndexRef = useRef<number | null>(null);
 
-  function handleRowClick(id: string, e: ReactMouseEvent) {
-    const idx = orderedLayers.findIndex((l) => l.id === id);
-    if (idx === -1) return;
+  function handleRowClick(rowIndex: number, e: ReactMouseEvent) {
+    const row = rows[rowIndex];
+    if (!row) return;
     if (e.shiftKey && lastSelectedIndexRef.current !== null) {
       const anchor = lastSelectedIndexRef.current;
-      const [start, end] = anchor < idx ? [anchor, idx] : [idx, anchor];
-      onSelectLayer(orderedLayers.slice(start, end + 1).map((l) => l.id), 'add');
+      const [start, end] = anchor < rowIndex ? [anchor, rowIndex] : [rowIndex, anchor];
+      onSelectLayer(rows.slice(start, end + 1).flatMap(idsForRow), 'add');
       return;
     }
-    lastSelectedIndexRef.current = idx;
+    lastSelectedIndexRef.current = rowIndex;
     if (e.ctrlKey || e.metaKey) {
-      onSelectLayer([id], 'toggle');
+      onSelectLayer(idsForRow(row), 'toggle');
     } else {
-      onSelectLayer([id], 'replace');
+      onSelectLayer(idsForRow(row), 'replace');
     }
   }
 
@@ -71,7 +85,7 @@ export function LayersPanel({
   // what caused the freeze/crash on vectorize — this bounds mounted rows to a
   // constant count regardless of total layer count.
   const virtualizer = useVirtualizer({
-    count: total,
+    count: rows.length,
     getScrollElement: () => listRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
@@ -80,10 +94,10 @@ export function LayersPanel({
   useEffect(() => {
     const lastId = selectedLayerIds[selectedLayerIds.length - 1];
     if (!lastId) return;
-    const idx = orderedLayers.findIndex((l) => l.id === lastId);
+    const idx = rows.findIndex((row) => (row.kind === 'layer' ? row.layer.id === lastId : row.leafIds.includes(lastId)));
     if (idx === -1) return;
     virtualizer.scrollToIndex(idx);
-  }, [selectedLayerIds, orderedLayers, virtualizer]);
+  }, [selectedLayerIds, rows, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
 
@@ -91,35 +105,57 @@ export function LayersPanel({
     <aside className="flex w-65 shrink-0 flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         <span>Layers</span>
-        <Badge variant="secondary">{total}</Badge>
+        <Badge variant="secondary">{totalLayerCount}</Badge>
       </div>
       <div className="relative flex-1 overflow-y-auto" ref={listRef}>
-        {total === 0 && (
+        {rows.length === 0 && (
           <p className="p-4 text-sm leading-relaxed text-muted-foreground">
             No layers left. Vectorize an image or undo deletions by re-vectorizing.
           </p>
         )}
         <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
           {virtualItems.map((virtualRow) => {
-            const layer = orderedLayers[virtualRow.index];
+            const row = rows[virtualRow.index];
+            const key = row.kind === 'layer' ? row.layer.id : row.id;
             return (
               <div
-                key={layer.id}
+                key={key}
                 className="absolute right-0 left-0 box-border"
                 style={{ top: virtualRow.start, height: virtualRow.size }}
               >
-                <LayerRow
-                  layer={layer}
-                  index={total - virtualRow.index}
-                  meta={meta}
-                  isHovered={layer.id === hoveredLayerId}
-                  isSelected={selectedIdSet.has(layer.id)}
-                  onToggleVisible={onToggleVisible}
-                  onDelete={onDelete}
-                  onHover={onHoverLayer}
-                  onRowClick={handleRowClick}
-                  onChangeColor={onChangeColor}
-                />
+                {row.kind === 'layer' ? (
+                  <LayerRow
+                    layer={row.layer}
+                    index={row.displayNumber}
+                    depth={row.depth}
+                    rowIndex={virtualRow.index}
+                    meta={meta}
+                    isHovered={row.layer.id === hoveredLayerId}
+                    isSelected={selectedIdSet.has(row.layer.id)}
+                    onToggleVisible={onToggleVisible}
+                    onDelete={onDelete}
+                    onHover={onHoverLayer}
+                    onRowClick={handleRowClick}
+                    onChangeColor={onChangeColor}
+                  />
+                ) : (
+                  <GroupRow
+                    id={row.id}
+                    label={row.label}
+                    depth={row.depth}
+                    rowIndex={virtualRow.index}
+                    expanded={row.expanded}
+                    memberCount={row.leafIds.length}
+                    allVisible={row.allVisible}
+                    isSelected={row.leafIds.length > 0 && row.leafIds.every((id) => selectedIdSet.has(id))}
+                    leafIds={row.leafIds}
+                    onToggleExpand={onToggleGroupCollapsed}
+                    onSetVisible={onSetVisibleMany}
+                    onDelete={onDeleteMany}
+                    onDownload={onDownloadGroup}
+                    onRowClick={handleRowClick}
+                  />
+                )}
               </div>
             );
           })}
