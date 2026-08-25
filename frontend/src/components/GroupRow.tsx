@@ -1,5 +1,5 @@
-import { memo } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useEffect, useRef } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { ChevronRight, Download, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { ROW_BASE_PADDING_PX, ROW_INDENT_PX } from '../lib/groupTree';
 import { Button } from './ui/button';
@@ -21,6 +21,10 @@ interface Props {
   onDownload: (leafIds: string[], label: string) => void;
   onRowClick: (rowIndex: number, e: ReactMouseEvent) => void;
   leafIds: string[];
+  isEditing: boolean;
+  onStartRename: (id: string) => void;
+  onRenameCommit: (id: string, label: string) => void;
+  onRenameCancel: () => void;
 }
 
 export const GroupRow = memo(function GroupRow({
@@ -38,7 +42,31 @@ export const GroupRow = memo(function GroupRow({
   onDownload,
   onRowClick,
   leafIds,
+  isEditing,
+  onStartRename,
+  onRenameCommit,
+  onRenameCancel,
 }: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing) inputRef.current?.select();
+  }, [isEditing]);
+
+  function commitRename() {
+    onRenameCommit(id, inputRef.current?.value ?? label);
+  }
+
+  function handleInputKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitRename();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onRenameCancel();
+    }
+  }
+
   return (
     <div
       className={cn(
@@ -61,7 +89,28 @@ export const GroupRow = memo(function GroupRow({
       >
         <ChevronRight className={cn('transition-transform', expanded && 'rotate-90')} />
       </Button>
-      <span className="flex-1 truncate text-sm font-medium">{label}</span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          defaultValue={label}
+          autoFocus
+          className="min-w-0 flex-1 rounded-sm border border-primary bg-background px-1 py-0.5 text-sm font-medium outline-none"
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={handleInputKeyDown}
+        />
+      ) : (
+        <span
+          className="flex-1 truncate text-sm font-medium"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onStartRename(id);
+          }}
+        >
+          {label}
+        </span>
+      )}
       <Badge variant="secondary" className="shrink-0">
         {memberCount}
       </Badge>

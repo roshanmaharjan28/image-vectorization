@@ -25,6 +25,7 @@ interface Props {
   onSetVisibleMany: (ids: string[], visible: boolean) => void;
   onDeleteMany: (ids: string[]) => void;
   onDownloadGroup: (leafIds: string[], label: string) => void;
+  onRenameGroup: (id: string, label: string) => void;
 }
 
 // Must match the rendered height of both LayerRow.tsx and GroupRow.tsx.
@@ -51,6 +52,7 @@ export function LayersPanel({
   onSetVisibleMany,
   onDeleteMany,
   onDownloadGroup,
+  onRenameGroup,
 }: Props) {
   const rows = useMemo(
     () => buildPanelRows(groupTree, layers, collapsedGroupIds),
@@ -85,6 +87,43 @@ export function LayersPanel({
       onSelectLayer(idsForRow(row), 'replace');
     }
   }
+
+  // Which group row (if any) is currently showing a rename input, driven by GroupRow's
+  // double-click and this panel's F2 handler below.
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+
+  function handleGroupStartRename(id: string) {
+    setEditingGroupId(id);
+  }
+
+  function handleGroupRenameCommit(id: string, label: string) {
+    setEditingGroupId(null);
+    const trimmed = label.trim();
+    if (trimmed) onRenameGroup(id, trimmed);
+  }
+
+  function handleGroupRenameCancel() {
+    setEditingGroupId(null);
+  }
+
+  // F2 renames the fully-selected group, mirroring Explorer/VS Code's "rename selected item"
+  // shortcut. Skipped while an input/textarea already has focus so it doesn't hijack typing
+  // elsewhere in the app.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'F2') return;
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+      const groupRow = rows.find(
+        (row) => row.kind === 'group' && row.leafIds.length > 0 && row.leafIds.every((id) => selectedIdSet.has(id)),
+      );
+      if (!groupRow || groupRow.kind !== 'group') return;
+      e.preventDefault();
+      setEditingGroupId(groupRow.id);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [rows, selectedIdSet]);
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   // Drag-resize via pointer capture rather than document-level listeners — the handle keeps
@@ -124,6 +163,13 @@ export function LayersPanel({
     overscan: OVERSCAN,
   });
 
+  // Read via a ref rather than a dependency: `rows` gets a new reference on every layer mutation
+  // (hide/delete/expand), and this effect must fire only on an actual selection change, not on
+  // every unrelated row rebuild (which was previously yanking the scroll position on those
+  // actions).
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
   useEffect(() => {
     if (skipNextScrollRef.current) {
       skipNextScrollRef.current = false;
@@ -131,10 +177,12 @@ export function LayersPanel({
     }
     const lastId = selectedLayerIds[selectedLayerIds.length - 1];
     if (!lastId) return;
-    const idx = rows.findIndex((row) => (row.kind === 'layer' ? row.layer.id === lastId : row.leafIds.includes(lastId)));
+    const idx = rowsRef.current.findIndex((row) =>
+      row.kind === 'layer' ? row.layer.id === lastId : row.leafIds.includes(lastId),
+    );
     if (idx === -1) return;
     virtualizer.scrollToIndex(idx, { align: 'auto' });
-  }, [selectedLayerIds, rows, virtualizer]);
+  }, [selectedLayerIds, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
 
@@ -203,6 +251,10 @@ export function LayersPanel({
                     onDelete={onDeleteMany}
                     onDownload={onDownloadGroup}
                     onRowClick={handleRowClick}
+                    isEditing={row.id === editingGroupId}
+                    onStartRename={handleGroupStartRename}
+                    onRenameCommit={handleGroupRenameCommit}
+                    onRenameCancel={handleGroupRenameCancel}
                   />
                 )}
               </div>

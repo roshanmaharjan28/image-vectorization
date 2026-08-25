@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { UploadDropzone } from '../components/UploadDropzone';
 import { Toolbar } from '../components/Toolbar';
@@ -165,12 +165,43 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     });
   }, []);
 
+  // Lets the Delete/Backspace key do the same thing as the trash icon for whatever's currently
+  // selected. Skipped while a text field (group rename, color hex, etc.) has focus, so deleting a
+  // character in one of those inputs doesn't also delete the selected layers.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (selectedLayerIds.length === 0) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      e.preventDefault();
+      handleDeleteMany(selectedLayerIds);
+      setSelectedLayerIds([]);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedLayerIds, handleDeleteMany]);
+
   const handleToggleGroupCollapsed = useCallback((id: string) => {
     setCollapsedGroupIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }, []);
+
+  const handleRenameGroup = useCallback((id: string, label: string) => {
+    setGroupTree((prev) => {
+      if (!prev) return prev;
+      function renameIn(nodes: TreeNode[]): TreeNode[] {
+        return nodes.map((node) => {
+          if (node.type === 'leaf') return node;
+          if (node.id === id) return { ...node, label };
+          return { ...node, children: renameIn(node.children) };
+        });
+      }
+      return renameIn(prev);
     });
   }, []);
 
@@ -270,6 +301,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onSelectLayer={handleSelectLayer}
           onChangeColor={handleChangeColor}
           onToggleGroupCollapsed={handleToggleGroupCollapsed}
+          onRenameGroup={handleRenameGroup}
           onSetVisibleMany={handleSetVisibleMany}
           onDeleteMany={handleDeleteMany}
           onDownloadGroup={handleDownloadGroup}
