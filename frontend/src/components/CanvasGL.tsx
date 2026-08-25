@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Layer, SvgMeta, Tool } from '../types';
 import { ROTATE_CURSOR, computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
-import { filterMoveTargets, type GroupOption } from '../lib/groupTree';
+import { filterMoveTargets, moveUpTargetLabel, type GroupOption } from '../lib/groupTree';
 import { useCanvasGLScene } from '../hooks/useCanvasGLScene';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 import { useCanvasPathEditing } from '../hooks/useCanvasPathEditing';
@@ -42,6 +42,9 @@ interface Props {
   onGroupSelected: () => void;
   groupOptions: GroupOption[];
   onMoveToGroup: (leafIds: string[], targetGroupId: string) => void;
+  /** Every layer's "move up a level" target id (a real group, or the root sentinel), keyed by
+   *  Layer.id — absent if the layer is already at the top level. */
+  moveUpTargets: Map<string, string>;
 }
 
 // Gizmo handle sizing, in constant screen pixels (divided by the current CSS zoom `scale` at
@@ -82,6 +85,7 @@ export function CanvasGL({
   onGroupSelected,
   groupOptions,
   onMoveToGroup,
+  moveUpTargets,
 }: Props) {
   // CSS pan/zoom for the artboard wrapper — lives here (rather than inside a hook) since it's
   // needed both by useCanvasGLScene (to pick the GL backing-store resolution) and by the JSX
@@ -236,6 +240,10 @@ export function CanvasGL({
       : contextLayer.visible
     : false;
   const moveTargets = contextLayer ? filterMoveTargets(groupOptions, menuTargetIds) : [];
+  // Skipped for a multi-selection, same rule as LayerRow/GroupRow — "up a level" is ambiguous once
+  // more than one row (with potentially different parents) is involved.
+  const moveUpId = contextLayer && !isMultiSelected ? moveUpTargets.get(contextLayer.id) : undefined;
+  const moveUpTarget = moveUpId ? { id: moveUpId, label: moveUpTargetLabel(moveUpId, groupOptions) } : null;
   const canGroupContextSelection = isMultiSelected;
 
   return (
@@ -371,6 +379,7 @@ export function CanvasGL({
           onUngroup={() => {}}
           moveTargets={moveTargets}
           onMoveTo={(targetGroupId) => onMoveToGroup(menuTargetIds, targetGroupId)}
+          moveUpTarget={moveUpTarget}
         />
       </ContextMenuPortal>
     )}

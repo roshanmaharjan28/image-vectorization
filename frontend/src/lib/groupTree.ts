@@ -361,6 +361,56 @@ export function listGroupOptions(tree: TreeNode[] | null, layers: Layer[]): Grou
   return out;
 }
 
+// Sentinel target id for "move to root" — distinct from any real group id (those come from the
+// backend or nextManualGroupId above), so moveLeavesToGroup can tell the two apart.
+export const ROOT_MOVE_TARGET_ID = '__root__';
+
+/** For every leaf and group node in `tree`, the id of the node one level up from its *current*
+ *  immediate parent — i.e. where "move up a level" should land it: a real group id if its parent
+ *  is itself nested, ROOT_MOVE_TARGET_ID if its parent already sits at the top level, or no entry
+ *  at all if the node has no parent to move out of (it's already at the top level). Feeds the
+ *  context menu's pinned "Move to Root" / "Move to Parent Group" shortcut, which is otherwise just
+ *  a `moveLeavesToGroup`/`moveLeavesToRoot` call to whichever id this map gives back. */
+export function computeMoveUpTargets(
+  tree: TreeNode[] | null,
+  layers: Layer[],
+): { leafTargets: Map<string, string>; groupTargets: Map<string, string> } {
+  const leafTargets = new Map<string, string>();
+  const groupTargets = new Map<string, string>();
+  if (!tree) return { leafTargets, groupTargets };
+
+  function targetFor(ancestorGroupIds: string[]): string | null {
+    if (ancestorGroupIds.length === 0) return null;
+    return ancestorGroupIds.length === 1 ? ROOT_MOVE_TARGET_ID : ancestorGroupIds[ancestorGroupIds.length - 2];
+  }
+
+  function walk(nodes: TreeNode[], ancestorGroupIds: string[]) {
+    for (const node of nodes) {
+      if (node.type === 'leaf') {
+        const layer = layers[node.index];
+        if (!layer || layer.deleted) continue;
+        const target = targetFor(ancestorGroupIds);
+        if (target) leafTargets.set(layer.id, target);
+        continue;
+      }
+      const target = targetFor(ancestorGroupIds);
+      if (target) groupTargets.set(node.id, target);
+      walk(node.children, [...ancestorGroupIds, node.id]);
+    }
+  }
+
+  walk(tree, []);
+  return { leafTargets, groupTargets };
+}
+
+/** Human label for a "move up" shortcut target — "Move to Root" for the sentinel, otherwise the
+ *  destination group's own name (falling back to a generic label if it's gone missing). */
+export function moveUpTargetLabel(targetId: string, groupOptions: GroupOption[]): string {
+  if (targetId === ROOT_MOVE_TARGET_ID) return 'Move to Root';
+  const group = groupOptions.find((option) => option.id === targetId);
+  return group ? `Move to "${group.label}"` : 'Move to Parent Group';
+}
+
 /** Removes from `options` any group that `leafIds` already fully constitutes — the row's own
  *  group (if it is one) and any of its nested subgroups — so a "Move to" submenu never offers to
  *  move a group into itself or one of its own descendants. An emptied-out group (no leaves left)
@@ -372,8 +422,9 @@ export function filterMoveTargets(options: GroupOption[], leafIds: string[]): Gr
 
 /** Moves `leafIds` (and, if they wholly constitute an existing group, that group as a single
  *  nested unit) out of wherever they currently sit in the tree and appends them as children of
- *  `targetGroupId`. Returns null if nothing was selected, or if `targetGroupId` can't be found
- *  after removal (e.g. a stale id from a since-dissolved group). */
+ *  `targetGroupId` — or, if `targetGroupId` is `ROOT_MOVE_TARGET_ID`, straight to the top level of
+ *  the tree. Returns null if nothing was selected, or if `targetGroupId` can't be found after
+ *  removal (e.g. a stale id from a since-dissolved group). */
 export function moveLeavesToGroup(
   tree: TreeNode[] | null,
   layers: Layer[],
@@ -391,6 +442,8 @@ export function moveLeavesToGroup(
   const workingTree = tree ?? layers.map((_, index) => ({ type: 'leaf' as const, index }));
   const { remaining, extracted } = extractSelected(workingTree, selected);
   if (extracted.length === 0) return null;
+
+  if (targetGroupId === ROOT_MOVE_TARGET_ID) return [...remaining, ...extracted];
 
   let inserted = false;
   function insertInto(nodes: TreeNode[]): TreeNode[] {

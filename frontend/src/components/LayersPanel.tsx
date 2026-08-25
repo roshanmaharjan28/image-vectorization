@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent }
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Group, Ungroup } from 'lucide-react';
 import type { Layer, SvgMeta, TreeNode } from '../types';
-import { buildPanelRows, idsForRow, listGroupOptions } from '../lib/groupTree';
+import { buildPanelRows, computeMoveUpTargets, idsForRow, listGroupOptions } from '../lib/groupTree';
 import { LayerRow } from './LayerRow';
 import { GroupRow } from './GroupRow';
 import { Badge } from './ui/badge';
@@ -73,6 +73,7 @@ export function LayersPanel({
   const totalLayerCount = useMemo(() => layers.filter((l) => !l.deleted).length, [layers]);
   const selectedIdSet = useMemo(() => new Set(selectedLayerIds), [selectedLayerIds]);
   const groupOptions = useMemo(() => listGroupOptions(groupTree, layers), [groupTree, layers]);
+  const moveUpTargets = useMemo(() => computeMoveUpTargets(groupTree, layers), [groupTree, layers]);
   // Whether every currently-selected layer is visible — used by a row's context menu so
   // Hide/Unhide reflects (and toggles) the whole selection, not just the row that was
   // right-clicked, when the click landed inside a multi-selection.
@@ -284,6 +285,7 @@ export function LayersPanel({
                     onGroupSelected={onGroupSelected}
                     groupOptions={groupOptions}
                     onMoveTo={onMoveToGroup}
+                    moveUpTargets={moveUpTargets.leafTargets}
                     selectedLayerIds={selectedLayerIds}
                     selectionAllVisible={selectionAllVisible}
                     onSetVisibleMany={onSetVisibleMany}
@@ -316,6 +318,7 @@ export function LayersPanel({
                     onUngroup={onUngroupGroup}
                     groupOptions={groupOptions}
                     onMoveTo={onMoveToGroup}
+                    moveUpTargets={moveUpTargets.groupTargets}
                     selectedLayerIds={selectedLayerIds}
                     selectionAllVisible={selectionAllVisible}
                   />

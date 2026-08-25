@@ -4,7 +4,13 @@ import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { Layer, SvgMeta } from '../types';
 import { layerToPathMarkup } from '../lib/svgSerialize';
 import { normalizeColorToHex } from '../lib/sceneBuilder';
-import { ROW_BASE_PADDING_PX, ROW_INDENT_PX, filterMoveTargets, type GroupOption } from '../lib/groupTree';
+import {
+  ROW_BASE_PADDING_PX,
+  ROW_INDENT_PX,
+  filterMoveTargets,
+  moveUpTargetLabel,
+  type GroupOption,
+} from '../lib/groupTree';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import { ContextMenu, ContextMenuPortal, ContextMenuTrigger } from './ui/context-menu';
@@ -29,6 +35,9 @@ interface Props {
   onGroupSelected: () => void;
   groupOptions: GroupOption[];
   onMoveTo: (leafIds: string[], targetGroupId: string) => void;
+  /** This layer's "move up a level" target id (a real group, or the root sentinel), keyed by
+   *  Layer.id — absent if the layer is already at the top level. */
+  moveUpTargets: Map<string, string>;
   selectedLayerIds: string[];
   selectionAllVisible: boolean;
   onSetVisibleMany: (ids: string[], visible: boolean) => void;
@@ -54,6 +63,7 @@ export const LayerRow = memo(function LayerRow({
   onGroupSelected,
   groupOptions,
   onMoveTo,
+  moveUpTargets,
   selectedLayerIds,
   selectionAllVisible,
   onSetVisibleMany,
@@ -66,6 +76,10 @@ export const LayerRow = memo(function LayerRow({
   const menuTargetIds = isMultiSelected ? selectedLayerIds : [layer.id];
   const menuVisible = isMultiSelected ? selectionAllVisible : layer.visible;
   const moveTargets = filterMoveTargets(groupOptions, menuTargetIds);
+  // "Move up a level" only has an unambiguous meaning for a single row — a multi-selection can
+  // span several different parents, so it's skipped there (the full moveTargets list still works).
+  const moveUpId = isMultiSelected ? undefined : moveUpTargets.get(layer.id);
+  const moveUpTarget = moveUpId ? { id: moveUpId, label: moveUpTargetLabel(moveUpId, groupOptions) } : null;
   const [thumbViewBox, setThumbViewBox] = useState<string | null>(null);
 
   useEffect(() => {
@@ -161,6 +175,7 @@ export const LayerRow = memo(function LayerRow({
         onUngroup={() => {}}
         moveTargets={moveTargets}
         onMoveTo={(targetGroupId) => onMoveTo(menuTargetIds, targetGroupId)}
+        moveUpTarget={moveUpTarget}
       />
     </ContextMenuPortal>
     </ContextMenu>

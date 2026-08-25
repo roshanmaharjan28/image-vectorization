@@ -1,7 +1,13 @@
 import { memo, useEffect, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { ChevronRight, Download, Eye, EyeOff, Trash2 } from 'lucide-react';
-import { ROW_BASE_PADDING_PX, ROW_INDENT_PX, filterMoveTargets, type GroupOption } from '../lib/groupTree';
+import {
+  ROW_BASE_PADDING_PX,
+  ROW_INDENT_PX,
+  filterMoveTargets,
+  moveUpTargetLabel,
+  type GroupOption,
+} from '../lib/groupTree';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
@@ -32,6 +38,9 @@ interface Props {
   onUngroup: (groupId: string) => void;
   groupOptions: GroupOption[];
   onMoveTo: (leafIds: string[], targetGroupId: string) => void;
+  /** This group's "move up a level" target id (a real group, or the root sentinel), keyed by
+   *  group id — absent if the group is already at the top level. */
+  moveUpTargets: Map<string, string>;
   selectedLayerIds: string[];
   selectionAllVisible: boolean;
 }
@@ -60,6 +69,7 @@ export const GroupRow = memo(function GroupRow({
   onUngroup,
   groupOptions,
   onMoveTo,
+  moveUpTargets,
   selectedLayerIds,
   selectionAllVisible,
 }: Props) {
@@ -69,6 +79,10 @@ export const GroupRow = memo(function GroupRow({
   const menuTargetIds = isMultiSelected ? selectedLayerIds : leafIds;
   const menuVisible = isMultiSelected ? selectionAllVisible : allVisible;
   const moveTargets = filterMoveTargets(groupOptions, menuTargetIds);
+  // Keyed by this group's own id (not its member leaves) — mirrors LayerRow, skipped when the
+  // right-click acts on a broader multi-selection instead of this specific group.
+  const moveUpId = isMultiSelected ? undefined : moveUpTargets.get(id);
+  const moveUpTarget = moveUpId ? { id: moveUpId, label: moveUpTargetLabel(moveUpId, groupOptions) } : null;
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -191,6 +205,7 @@ export const GroupRow = memo(function GroupRow({
         onUngroup={() => onUngroup(id)}
         moveTargets={moveTargets}
         onMoveTo={(targetGroupId) => onMoveTo(menuTargetIds, targetGroupId)}
+        moveUpTarget={moveUpTarget}
       />
     </ContextMenuPortal>
     </ContextMenu>

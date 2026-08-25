@@ -12,6 +12,7 @@ import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
 import {
   collectGroupIds,
+  computeMoveUpTargets,
   groupSelectedLeaves,
   listGroupOptions,
   moveLeavesToGroup,
@@ -57,6 +58,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   // path-edit for that layer) and immediately clears it via handleEditPathRequestHandled.
   const [editPathRequestId, setEditPathRequestId] = useState<string | null>(null);
   const groupOptions = useMemo(() => listGroupOptions(groupTree, layers), [groupTree, layers]);
+  const moveUpTargets = useMemo(() => computeMoveUpTargets(groupTree, layers), [groupTree, layers]);
 
   function handleToggleShowOriginal() {
     setOverlayMode((mode) => (mode === 'original' ? 'none' : 'original'));
@@ -365,6 +367,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             onGroupSelected={handleGroupSelected}
             groupOptions={groupOptions}
             onMoveToGroup={handleMoveToGroup}
+            moveUpTargets={moveUpTargets.leafTargets}
           />
           {showParams && (
             <>

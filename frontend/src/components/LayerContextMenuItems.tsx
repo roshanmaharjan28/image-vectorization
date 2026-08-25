@@ -1,5 +1,6 @@
-import { Download, Eye, EyeOff, FolderInput, Group, PenLine, Trash2, Ungroup } from 'lucide-react';
+import { CornerLeftUp, Download, Eye, EyeOff, FolderInput, Group, Home, PenLine, Trash2, Ungroup } from 'lucide-react';
 import type { GroupOption } from '../lib/groupTree';
+import { ROOT_MOVE_TARGET_ID } from '../lib/groupTree';
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -26,6 +27,9 @@ interface Props {
   onUngroup: () => void;
   moveTargets: GroupOption[];
   onMoveTo: (targetGroupId: string) => void;
+  /** Pinned shortcut for "move up a level" — id/label of wherever that currently lands (a real
+   *  group, or the root sentinel), or null if there's nowhere to move up to (already at the top). */
+  moveUpTarget: { id: string; label: string } | null;
 }
 
 /** The `<ContextMenuContent>` shared by LayerRow, GroupRow, and CanvasGL's on-canvas right-click —
@@ -45,6 +49,7 @@ export function LayerContextMenuItems({
   onUngroup,
   moveTargets,
   onMoveTo,
+  moveUpTarget,
 }: Props) {
   return (
     <ContextMenuContent>
@@ -62,7 +67,7 @@ export function LayerContextMenuItems({
         <Download />
         {downloadLabel}
       </ContextMenuItem>
-      {(showGroupSelection || showUngroup || moveTargets.length > 0) && <ContextMenuSeparator />}
+      {(showGroupSelection || showUngroup || moveTargets.length > 0 || moveUpTarget) && <ContextMenuSeparator />}
       {showGroupSelection && (
         <ContextMenuItem onClick={onGroupSelected}>
           <Group />
@@ -75,7 +80,7 @@ export function LayerContextMenuItems({
           Ungroup
         </ContextMenuItem>
       )}
-      {moveTargets.length > 0 && (
+      {(moveTargets.length > 0 || moveUpTarget) && (
         <ContextMenuSub>
           <ContextMenuSubTrigger>
             <FolderInput />
@@ -83,6 +88,15 @@ export function LayerContextMenuItems({
           </ContextMenuSubTrigger>
           <ContextMenuPortal>
             <ContextMenuSubContent>
+              {moveUpTarget && (
+                <>
+                  <ContextMenuItem onClick={() => onMoveTo(moveUpTarget.id)}>
+                    {moveUpTarget.id === ROOT_MOVE_TARGET_ID ? <Home /> : <CornerLeftUp />}
+                    {moveUpTarget.label}
+                  </ContextMenuItem>
+                  {moveTargets.length > 0 && <ContextMenuSeparator />}
+                </>
+              )}
               {moveTargets.map((target) => (
                 <ContextMenuItem
                   key={target.id}
