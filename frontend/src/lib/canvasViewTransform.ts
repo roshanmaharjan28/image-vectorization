@@ -79,6 +79,42 @@ const ROTATE_CURSOR_SVG =
 export const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(ROTATE_CURSOR_SVG)}") 10 10, grab`;
 
 /**
+ * Axis-aligned world-space bounds of one layer's (possibly rotated) corners — layerBounds is the
+ * scene's untransformed per-layer bbox array (sceneGeometry.layerBounds / layerBoundsRef), idx is
+ * that layer's index into it. Used by marquee (ctrl-drag) selection to hit-test each layer against
+ * the drag rectangle; unlike computeGizmoState below, this collapses to an AABB rather than
+ * keeping the rotated corners, since hit-testing doesn't need the exact rotated shape.
+ */
+export function layerWorldAABB(
+  layer: Layer,
+  idx: number,
+  layerBounds: Float32Array,
+): [number, number, number, number] | null {
+  if (idx * 4 + 3 >= layerBounds.length) return null;
+  const minX = layerBounds[idx * 4];
+  const minY = layerBounds[idx * 4 + 1];
+  const maxX = layerBounds[idx * 4 + 2];
+  const maxY = layerBounds[idx * 4 + 3];
+  const corners: [number, number][] = [
+    [minX, minY],
+    [maxX, minY],
+    [maxX, maxY],
+    [minX, maxY],
+  ].map(([x, y]) => applyTransform(layer.transform, x, y));
+  let ax0 = Infinity;
+  let ay0 = Infinity;
+  let ax1 = -Infinity;
+  let ay1 = -Infinity;
+  for (const [x, y] of corners) {
+    if (x < ax0) ax0 = x;
+    if (x > ax1) ax1 = x;
+    if (y < ay0) ay0 = y;
+    if (y > ay1) ay1 = y;
+  }
+  return [ax0, ay0, ax1, ay1];
+}
+
+/**
  * Derives the gizmo's box + handle positions from the current selection's world-space bounds
  * (sceneGeometry.layerBounds, transformed by each layer's current `transform`) — pure geometry,
  * no GL or React involved.

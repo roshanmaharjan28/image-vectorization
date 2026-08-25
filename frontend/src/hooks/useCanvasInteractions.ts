@@ -1,14 +1,30 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { Dispatch, MouseEvent as ReactMouseEvent, RefObject, SetStateAction, WheelEvent as ReactWheelEvent } from 'react';
 import type { Layer, Tool } from '../types';
-import { ROTATE_CURSOR, clientToWorld, cornerResizeCursor, type GizmoState, type ViewTransform } from '../lib/canvasViewTransform';
+import {
+  ROTATE_CURSOR,
+  clientToWorld,
+  cornerResizeCursor,
+  layerWorldAABB,
+  type GizmoState,
+  type ViewTransform,
+} from '../lib/canvasViewTransform';
 import { rotateAroundPivot, scaleAroundPivot, type Mat2x3 } from '../lib/svgTransform';
 
-// Client-space distance a pan drag must exceed before it counts as an actual pan rather than a
-// click — below this, mouseup should still fall through to the normal select/deselect click.
+// Client-space distance a pan or marquee drag must exceed before it counts as an actual drag
+// rather than a click — below this, mouseup should still fall through to the normal
+// select/deselect click.
 const PAN_DRAG_THRESHOLD_PX = 4;
 
-type DragMode = 'pan' | 'move' | 'scale' | 'rotate';
+type DragMode = 'pan' | 'move' | 'scale' | 'rotate' | 'marquee';
+
+/** Client-viewport rectangle for the ctrl-drag marquee overlay — see CanvasGL's `.canvas__marquee`. */
+export interface MarqueeRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
 interface DragInfo {
   /** Snapshot of every dragged layer's transform at mousedown — every frame recomputes from this,
@@ -36,6 +52,10 @@ interface Options {
   gizmo: GizmoState | null;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   pickLayerIndexAt: (clientX: number, clientY: number) => number;
+  // Per-layer index/bbox lookups (see useCanvasGLScene) — used to hit-test each layer's
+  // world-space bounds against the marquee rectangle on ctrl-drag.
+  layerIndexMapRef: RefObject<Map<string, number>>;
+  layerBoundsRef: RefObject<Float32Array>;
   // CSS pan/zoom state lives in the CanvasGL component (it also drives the artboard's `transform`
   // style and CanvasGL's GL resolution-scale effect) — this hook only reads/updates it.
   setScale: Dispatch<SetStateAction<number>>;
@@ -61,6 +81,8 @@ export function useCanvasInteractions({
   gizmo,
   canvasRef,
   pickLayerIndexAt,
+  layerIndexMapRef,
+  layerBoundsRef,
   setScale,
   offset,
   setOffset,
@@ -71,6 +93,15 @@ export function useCanvasInteractions({
   // pre-offset for directly computing the artboard's translate.
   const panStartClientRef = useRef<{ x: number; y: number } | null>(null);
   const panMovedRef = useRef(false);
+
+  // Ctrl-drag marquee (rubber-band) selection. marqueeOriginRef is the client-space mousedown
+  // position; marqueeRect (state, since CanvasGL renders it live) is the derived on-screen box.
+  // Kept in client/viewport space rather than world space so the overlay div's CSS position
+  // needs no conversion for the artboard's pan/zoom CSS transform.
+  const marqueeOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const marqueeMovedRef = useRef(false);
+  const rafMarqueePending = useRef(false);
+  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   // Lets the pinned drag cursor (resize/rotate) win over `.canvas`'s own stylesheet cursor rule,
   // which otherwise takes precedence over anything set on document.body for any pointer position
   // inside the canvas (see handleGizmoHandleMouseDown).
@@ -118,10 +149,60 @@ export function useCanvasInteractions({
     // (see CanvasGL's ContextMenu), and a stray drag-mode would otherwise still be "in flight"
     // once that menu closes.
     if (e.button !== 0) return;
+    // Ctrl/Cmd-drag starts a marquee (rubber-band) selection instead of a pan — only meaningful
+    // for the 'cursor' tool, matching every other selection interaction below; 'hand'/'pen' keep
+    // ctrl-drag as a plain pan.
+    if (tool === 'cursor' && (e.ctrlKey || e.metaKey)) {
+      dragModeRef.current = 'marquee';
+      marqueeOriginRef.current = { x: e.clientX, y: e.clientY };
+      marqueeMovedRef.current = false;
+      setMarqueeRect({ left: e.clientX, top: e.clientY, width: 0, height: 0 });
+      return;
+    }
     dragModeRef.current = 'pan';
     dragOrigin.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
     panStartClientRef.current = { x: e.clientX, y: e.clientY };
     panMovedRef.current = false;
+  }
+
+  function updateMarqueeAt(clientX: number, clientY: number) {
+    const origin = marqueeOriginRef.current;
+    if (!origin) return;
+    setMarqueeRect({
+      left: Math.min(origin.x, clientX),
+      top: Math.min(origin.y, clientY),
+      width: Math.abs(clientX - origin.x),
+      height: Math.abs(clientY - origin.y),
+    });
+  }
+
+  // Hit-tests every layer's world-space bounds against the dragged rectangle and adds the ones
+  // *fully enclosed* by it to the current selection (matching Illustrator/Figma marquee
+  // semantics — a shape merely clipped by the box edge doesn't count). Ctrl-drag is additive
+  // (like ctrl/cmd-click on a file manager's icon grid) rather than a replace, so it composes
+  // with an existing selection.
+  function finishMarquee(e: ReactMouseEvent<HTMLDivElement> | undefined) {
+    const canvas = canvasRef.current;
+    const origin = marqueeOriginRef.current;
+    if (!canvas || !view || !origin || !e || !marqueeMovedRef.current) return;
+    const [wx0, wy0] = clientToWorld(canvas, view, origin.x, origin.y);
+    const [wx1, wy1] = clientToWorld(canvas, view, e.clientX, e.clientY);
+    const minX = Math.min(wx0, wx1);
+    const maxX = Math.max(wx0, wx1);
+    const minY = Math.min(wy0, wy1);
+    const maxY = Math.max(wy0, wy1);
+
+    const ids: string[] = [];
+    for (const layer of layers) {
+      if (layer.deleted || !layer.visible) continue;
+      const idx = layerIndexMapRef.current.get(layer.id);
+      if (idx === undefined) continue;
+      const aabb = layerWorldAABB(layer, idx, layerBoundsRef.current);
+      if (!aabb) continue;
+      const [lx0, ly0, lx1, ly1] = aabb;
+      if (lx0 >= minX && lx1 <= maxX && ly0 >= minY && ly1 <= maxY) ids.push(layer.id);
+    }
+    if (ids.length > 0) onSelectLayer(ids, 'add');
   }
 
   function applyDrag(mode: 'move' | 'scale' | 'rotate', clientX: number, clientY: number) {
@@ -176,6 +257,22 @@ export function useCanvasInteractions({
       setOffset({ x: e.clientX - dragOrigin.current.x, y: e.clientY - dragOrigin.current.y });
       return;
     }
+    if (mode === 'marquee') {
+      if (!marqueeMovedRef.current) {
+        const origin = marqueeOriginRef.current;
+        if (origin && Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > PAN_DRAG_THRESHOLD_PX) {
+          marqueeMovedRef.current = true;
+        }
+      }
+      if (rafMarqueePending.current) return;
+      rafMarqueePending.current = true;
+      const { clientX, clientY } = e;
+      requestAnimationFrame(() => {
+        rafMarqueePending.current = false;
+        updateMarqueeAt(clientX, clientY);
+      });
+      return;
+    }
     if (mode && dragInfoRef.current) {
       if (rafDragPending.current) return;
       rafDragPending.current = true;
@@ -187,9 +284,16 @@ export function useCanvasInteractions({
     }
   }
 
-  function stopDrag() {
+  function stopDrag(e?: ReactMouseEvent<HTMLDivElement>) {
     const mode = dragModeRef.current;
-    if (mode === 'move' || mode === 'scale' || mode === 'rotate' || (mode === 'pan' && panMovedRef.current)) {
+    if (mode === 'marquee') finishMarquee(e);
+    if (
+      mode === 'move' ||
+      mode === 'scale' ||
+      mode === 'rotate' ||
+      (mode === 'pan' && panMovedRef.current) ||
+      (mode === 'marquee' && marqueeMovedRef.current)
+    ) {
       suppressNextClickRef.current = true;
     }
     dragModeRef.current = null;
@@ -197,6 +301,9 @@ export function useCanvasInteractions({
     dragInfoRef.current = null;
     panStartClientRef.current = null;
     panMovedRef.current = false;
+    marqueeOriginRef.current = null;
+    marqueeMovedRef.current = false;
+    setMarqueeRect(null);
     if (wrapperRef.current) wrapperRef.current.style.cursor = '';
   }
 
@@ -245,7 +352,10 @@ export function useCanvasInteractions({
   }
 
   function handleCanvasMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
-    if (tool !== 'cursor' || e.button !== 0) return;
+    // A ctrl/cmd-held drag always starts a marquee, even over an already-selected shape — don't
+    // stopPropagation below, so the mousedown bubbles up to handleWrapperMouseDown instead of
+    // starting a move-drag on the shape underneath.
+    if (tool !== 'cursor' || e.button !== 0 || e.ctrlKey || e.metaKey) return;
     const canvas = canvasRef.current;
     if (!canvas || !view) return;
     const idx = pickLayerIndexAt(e.clientX, e.clientY);
@@ -304,5 +414,8 @@ export function useCanvasInteractions({
     // real pan drag — stopDrag() already flips this on mouseup, handleCanvasClick just happens to
     // be the only consumer today.
     suppressNextClickRef,
+    // The live ctrl-drag selection rectangle, in viewport coordinates — CanvasGL renders it as a
+    // `.canvas__marquee` overlay while non-null.
+    marqueeRect,
   };
 }

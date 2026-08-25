@@ -152,7 +152,14 @@ export function CanvasGL({
     [layers, selectedLayerIds, meta, sceneGeometry],
   );
 
-  const { wrapperRef, wrapperHandlers, canvasHandlers, handleGizmoHandleMouseDown, suppressNextClickRef } = useCanvasInteractions({
+  const {
+    wrapperRef,
+    wrapperHandlers,
+    canvasHandlers,
+    handleGizmoHandleMouseDown,
+    suppressNextClickRef,
+    marqueeRect,
+  } = useCanvasInteractions({
     view,
     tool,
     layers,
@@ -163,6 +170,8 @@ export function CanvasGL({
     gizmo,
     canvasRef,
     pickLayerIndexAt,
+    layerIndexMapRef,
+    layerBoundsRef,
     setScale,
     offset,
     setOffset,
@@ -188,9 +197,10 @@ export function CanvasGL({
   }
 
   // The dark area outside the artboard page belongs to the wrapper div, not the <canvas> element,
-  // so a click out there never reaches handleCursorClick above — handle the same exit here. Guarded
-  // to the wrapper itself (not a bubbled click from the canvas/svg children, which handleCursorClick
-  // and suppressNextClickRef already resolved) so a post-drag click isn't double-processed.
+  // so a click out there never reaches handleCursorClick above — handle the same exit/deselect here.
+  // Guarded to the wrapper itself (not a bubbled click from the canvas/svg children, which
+  // handleCursorClick and suppressNextClickRef already resolved) so a post-drag click isn't
+  // double-processed.
   function handleWrapperClick(e: ReactMouseEvent<HTMLDivElement>) {
     if (e.target !== e.currentTarget) return;
     if (suppressNextClickRef.current) {
@@ -198,6 +208,7 @@ export function CanvasGL({
       return;
     }
     if (editingLayerId) exitPathEdit();
+    if (tool === 'cursor' && selectedLayerIds.length > 0) onSelectLayer([], 'replace');
   }
 
   const rotateHandlePage: [number, number] | null = gizmo
@@ -218,12 +229,12 @@ export function CanvasGL({
       wrapperHandlers.onMouseMove(e);
       pathEditingWrapperHandlers.onMouseMove(e);
     },
-    onMouseUp: () => {
-      wrapperHandlers.onMouseUp();
+    onMouseUp: (e: ReactMouseEvent<HTMLDivElement>) => {
+      wrapperHandlers.onMouseUp(e);
       pathEditingWrapperHandlers.onMouseUp();
     },
-    onMouseLeave: () => {
-      wrapperHandlers.onMouseLeave();
+    onMouseLeave: (e: ReactMouseEvent<HTMLDivElement>) => {
+      wrapperHandlers.onMouseLeave(e);
       pathEditingWrapperHandlers.onMouseUp();
     },
   };
@@ -362,6 +373,12 @@ export function CanvasGL({
           )}
         </div>
       </div>
+      {marqueeRect && (
+        <div
+          className="canvas__marquee"
+          style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height }}
+        />
+      )}
     </ContextMenuTrigger>
     {contextLayer && (
       <ContextMenuPortal>
