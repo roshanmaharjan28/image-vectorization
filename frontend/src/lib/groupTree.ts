@@ -183,7 +183,7 @@ export function buildPanelRows(
 // (and no risk of colliding with) whatever id scheme the backend's FastSAM/OpenCV pass used.
 let nextManualGroupId = 0;
 
-function collectLeafIndices(node: TreeNode): number[] {
+export function collectLeafIndices(node: TreeNode): number[] {
   return node.type === 'leaf' ? [node.index] : node.children.flatMap(collectLeafIndices);
 }
 
@@ -237,8 +237,14 @@ export function groupSelectedLeaves(
   const { remaining, extracted } = extractSelected(workingTree, selected);
   if (extracted.length < 2) return null;
 
-  const groupId = `manual-group-${nextManualGroupId++}`;
-  const newGroup: GroupNode = { type: 'group', id: groupId, label: null, children: extracted };
+  nextManualGroupId += 1;
+  const groupId = `manual-group-${nextManualGroupId}`;
+  const newGroup: GroupNode = {
+    type: 'group',
+    id: groupId,
+    label: `Group ${nextManualGroupId}`,
+    children: extracted,
+  };
   return { tree: [...remaining, newGroup], groupId };
 }
 
@@ -289,4 +295,115 @@ export function ungroupSelectedLeaves(
 
   const { nodes, changed } = ungroupIn(tree, selected);
   return changed ? nodes : null;
+}
+
+/** Dissolves one specific group (by id) wherever it appears in the tree, splicing its children
+ *  into its former parent's position — independent of the current selection, unlike
+ *  ungroupSelectedLeaves above. Used by a group row's context menu "Ungroup" action. */
+export function ungroupGroupById(tree: TreeNode[] | null, groupId: string): TreeNode[] | null {
+  if (!tree) return null;
+
+  function walk(nodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } {
+    const result: TreeNode[] = [];
+    let changed = false;
+    for (const node of nodes) {
+      if (node.type === 'leaf') {
+        result.push(node);
+        continue;
+      }
+      if (node.id === groupId) {
+        result.push(...node.children);
+        changed = true;
+        continue;
+      }
+      const child = walk(node.children);
+      if (child.changed) {
+        result.push({ ...node, children: child.nodes });
+        changed = true;
+      } else {
+        result.push(node);
+      }
+    }
+    return { nodes: result, changed };
+  }
+
+  const { nodes, changed } = walk(tree);
+  return changed ? nodes : null;
+}
+
+export interface GroupOption {
+  id: string;
+  label: string;
+  depth: number;
+  leafIds: string[];
+}
+
+/** Flat list of every group in the tree (regardless of collapse state), each carrying its own
+ *  resolved leaf Layer ids — feeds a context menu's "Move to" submenu, and (via
+ *  filterMoveTargets) keeps a group from being offered as a target inside itself. */
+export function listGroupOptions(tree: TreeNode[] | null, layers: Layer[]): GroupOption[] {
+  if (!tree) return [];
+  const out: GroupOption[] = [];
+
+  function walk(nodes: TreeNode[], depth: number) {
+    for (const node of nodes) {
+      if (node.type === 'leaf') continue;
+      const leafIds = collectLeafIndices(node)
+        .map((index) => layers[index])
+        .filter((layer): layer is Layer => Boolean(layer) && !layer.deleted)
+        .map((layer) => layer.id);
+      out.push({ id: node.id, label: node.label ?? 'Group', depth, leafIds });
+      walk(node.children, depth + 1);
+    }
+  }
+
+  walk(tree, 0);
+  return out;
+}
+
+/** Removes from `options` any group that `leafIds` already fully constitutes — the row's own
+ *  group (if it is one) and any of its nested subgroups — so a "Move to" submenu never offers to
+ *  move a group into itself or one of its own descendants. An emptied-out group (no leaves left)
+ *  is never excluded by this check, since "every id of an empty set" is vacuously true. */
+export function filterMoveTargets(options: GroupOption[], leafIds: string[]): GroupOption[] {
+  const leafSet = new Set(leafIds);
+  return options.filter((option) => option.leafIds.length === 0 || !option.leafIds.every((id) => leafSet.has(id)));
+}
+
+/** Moves `leafIds` (and, if they wholly constitute an existing group, that group as a single
+ *  nested unit) out of wherever they currently sit in the tree and appends them as children of
+ *  `targetGroupId`. Returns null if nothing was selected, or if `targetGroupId` can't be found
+ *  after removal (e.g. a stale id from a since-dissolved group). */
+export function moveLeavesToGroup(
+  tree: TreeNode[] | null,
+  layers: Layer[],
+  leafIds: string[],
+  targetGroupId: string,
+): TreeNode[] | null {
+  const idToIndex = new Map(layers.map((layer, index) => [layer.id, index]));
+  const selected = new Set<number>();
+  for (const id of leafIds) {
+    const index = idToIndex.get(id);
+    if (index !== undefined && !layers[index].deleted) selected.add(index);
+  }
+  if (selected.size === 0) return null;
+
+  const workingTree = tree ?? layers.map((_, index) => ({ type: 'leaf' as const, index }));
+  const { remaining, extracted } = extractSelected(workingTree, selected);
+  if (extracted.length === 0) return null;
+
+  let inserted = false;
+  function insertInto(nodes: TreeNode[]): TreeNode[] {
+    return nodes.map((node) => {
+      if (node.type === 'leaf') return node;
+      if (node.id === targetGroupId) {
+        inserted = true;
+        return { ...node, children: [...node.children, ...extracted] };
+      }
+      return { ...node, children: insertInto(node.children) };
+    });
+  }
+
+  const nextTree = insertInto(remaining);
+  return inserted ? nextTree : null;
 }

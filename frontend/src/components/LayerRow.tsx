@@ -4,9 +4,11 @@ import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { Layer, SvgMeta } from '../types';
 import { layerToPathMarkup } from '../lib/svgSerialize';
 import { normalizeColorToHex } from '../lib/sceneBuilder';
-import { ROW_BASE_PADDING_PX, ROW_INDENT_PX } from '../lib/groupTree';
+import { ROW_BASE_PADDING_PX, ROW_INDENT_PX, filterMoveTargets, type GroupOption } from '../lib/groupTree';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
+import { ContextMenu, ContextMenuPortal, ContextMenuTrigger } from './ui/context-menu';
+import { LayerContextMenuItems } from './LayerContextMenuItems';
 
 interface Props {
   layer: Layer;
@@ -21,6 +23,16 @@ interface Props {
   onHover: (id: string | null) => void;
   onRowClick: (rowIndex: number, e: ReactMouseEvent) => void;
   onChangeColor: (id: string, hex: string) => void;
+  onDownload: (leafIds: string[], label: string) => void;
+  onRequestEditPath: (id: string) => void;
+  canGroupSelection: boolean;
+  onGroupSelected: () => void;
+  groupOptions: GroupOption[];
+  onMoveTo: (leafIds: string[], targetGroupId: string) => void;
+  selectedLayerIds: string[];
+  selectionAllVisible: boolean;
+  onSetVisibleMany: (ids: string[], visible: boolean) => void;
+  onDeleteMany: (ids: string[]) => void;
 }
 
 export const LayerRow = memo(function LayerRow({
@@ -36,8 +48,24 @@ export const LayerRow = memo(function LayerRow({
   onHover,
   onRowClick,
   onChangeColor,
+  onDownload,
+  onRequestEditPath,
+  canGroupSelection,
+  onGroupSelected,
+  groupOptions,
+  onMoveTo,
+  selectedLayerIds,
+  selectionAllVisible,
+  onSetVisibleMany,
+  onDeleteMany,
 }: Props) {
   const thumbRef = useRef<SVGSVGElement>(null);
+  // A right-click inside an existing multi-selection acts on the whole selection, matching
+  // conventional file-list context-menu behavior; right-clicking outside it acts on just this row.
+  const isMultiSelected = isSelected && selectedLayerIds.length > 1;
+  const menuTargetIds = isMultiSelected ? selectedLayerIds : [layer.id];
+  const menuVisible = isMultiSelected ? selectionAllVisible : layer.visible;
+  const moveTargets = filterMoveTargets(groupOptions, menuTargetIds);
   const [thumbViewBox, setThumbViewBox] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,7 +86,8 @@ export const LayerRow = memo(function LayerRow({
   }, [layer, meta]);
 
   return (
-    <div
+    <ContextMenu>
+    <ContextMenuTrigger
       className={cn(
         'box-border flex h-full items-center gap-2.5 border-b border-border pr-4',
         !layer.visible && 'opacity-45',
@@ -116,6 +145,24 @@ export const LayerRow = memo(function LayerRow({
       >
         <Trash2 />
       </Button>
-    </div>
+    </ContextMenuTrigger>
+    <ContextMenuPortal>
+      <LayerContextMenuItems
+        visible={menuVisible}
+        onToggleVisible={() => (isMultiSelected ? onSetVisibleMany(menuTargetIds, !menuVisible) : onToggleVisible(layer.id))}
+        onDownload={() => onDownload(menuTargetIds, isMultiSelected ? `${menuTargetIds.length} layers` : `Layer ${index}`)}
+        downloadLabel={isMultiSelected ? `Download ${menuTargetIds.length} layers` : 'Download layer'}
+        onDelete={() => (isMultiSelected ? onDeleteMany(menuTargetIds) : onDelete(layer.id))}
+        deleteLabel={isMultiSelected ? `Delete ${menuTargetIds.length} layers` : 'Delete layer'}
+        onEditPath={() => onRequestEditPath(layer.id)}
+        showGroupSelection={canGroupSelection}
+        onGroupSelected={onGroupSelected}
+        showUngroup={false}
+        onUngroup={() => {}}
+        moveTargets={moveTargets}
+        onMoveTo={(targetGroupId) => onMoveTo(menuTargetIds, targetGroupId)}
+      />
+    </ContextMenuPortal>
+    </ContextMenu>
   );
 });

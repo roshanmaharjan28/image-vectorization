@@ -114,6 +114,10 @@ export function useCanvasInteractions({
   }
 
   function handleWrapperMouseDown(e: ReactMouseEvent<HTMLDivElement>) {
+    // Right/middle-click shouldn't start a pan — a right-click opens the context menu instead
+    // (see CanvasGL's ContextMenu), and a stray drag-mode would otherwise still be "in flight"
+    // once that menu closes.
+    if (e.button !== 0) return;
     dragModeRef.current = 'pan';
     dragOrigin.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
     panStartClientRef.current = { x: e.clientX, y: e.clientY };
@@ -241,7 +245,7 @@ export function useCanvasInteractions({
   }
 
   function handleCanvasMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
-    if (tool !== 'cursor') return;
+    if (tool !== 'cursor' || e.button !== 0) return;
     const canvas = canvasRef.current;
     if (!canvas || !view) return;
     const idx = pickLayerIndexAt(e.clientX, e.clientY);

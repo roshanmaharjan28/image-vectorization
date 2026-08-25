@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Layer, SvgMeta, Tool } from '../types';
 import { ROTATE_CURSOR, computeGizmoState, computeViewTransform, cornerResizeCursor } from '../lib/canvasViewTransform';
+import { filterMoveTargets, type GroupOption } from '../lib/groupTree';
 import { useCanvasGLScene } from '../hooks/useCanvasGLScene';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 import { useCanvasPathEditing } from '../hooks/useCanvasPathEditing';
+import { ContextMenu, ContextMenuPortal, ContextMenuTrigger } from './ui/context-menu';
+import { LayerContextMenuItems } from './LayerContextMenuItems';
 
 interface Props {
   imageUrl: string | null;
@@ -29,6 +32,16 @@ interface Props {
   // 'cursor' selects/moves/scales/rotates/path-edits elements as usual; 'hand' turns every drag
   // into a pan and disables hover/selection/gizmo/path-edit entirely.
   tool: Tool;
+  // Set by a LayersPanel row's "Edit path" context menu action to enter path-edit for a layer the
+  // panel — not the canvas — picked; cleared immediately via onEditPathRequestHandled once consumed.
+  requestEditLayerId: string | null;
+  onEditPathRequestHandled: () => void;
+  onSetVisibleMany: (ids: string[], visible: boolean) => void;
+  onDeleteMany: (ids: string[]) => void;
+  onDownloadLayers: (leafIds: string[], label: string) => void;
+  onGroupSelected: () => void;
+  groupOptions: GroupOption[];
+  onMoveToGroup: (leafIds: string[], targetGroupId: string) => void;
 }
 
 // Gizmo handle sizing, in constant screen pixels (divided by the current CSS zoom `scale` at
@@ -61,6 +74,14 @@ export function CanvasGL({
   showOriginal,
   showPaths,
   tool,
+  requestEditLayerId,
+  onEditPathRequestHandled,
+  onSetVisibleMany,
+  onDeleteMany,
+  onDownloadLayers,
+  onGroupSelected,
+  groupOptions,
+  onMoveToGroup,
 }: Props) {
   // CSS pan/zoom for the artboard wrapper — lives here (rather than inside a hook) since it's
   // needed both by useCanvasGLScene (to pick the GL backing-store resolution) and by the JSX
@@ -85,15 +106,39 @@ export function CanvasGL({
     geometryVersion,
   });
 
-  const { editingLayerId, pathAnchors, exitPathEdit, handleCanvasDoubleClick, handleAnchorMouseDown, pathEditingWrapperHandlers } =
-    useCanvasPathEditing({
-      view,
-      layers,
-      onTransformLayers,
-      canvasRef,
-      pickLayerIndexAt,
-      onPathEdited: () => setGeometryVersion((v) => v + 1),
-    });
+  const {
+    editingLayerId,
+    pathAnchors,
+    enterPathEdit,
+    exitPathEdit,
+    handleCanvasDoubleClick,
+    handleAnchorMouseDown,
+    pathEditingWrapperHandlers,
+  } = useCanvasPathEditing({
+    view,
+    layers,
+    onTransformLayers,
+    canvasRef,
+    pickLayerIndexAt,
+    onPathEdited: () => setGeometryVersion((v) => v + 1),
+  });
+
+  // A LayersPanel row's "Edit path" action reaches into this canvas-owned hook via a request id
+  // set by the parent, since useCanvasPathEditing's enterPathEdit isn't otherwise reachable from
+  // outside CanvasGL.
+  useEffect(() => {
+    if (!requestEditLayerId) return;
+    enterPathEdit(requestEditLayerId);
+    onEditPathRequestHandled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestEditLayerId]);
+
+  // Right-click context menu: which layer (if any) was under the pointer when the menu opened.
+  // Only ever set for the 'cursor'/'pen' tools — see the ContextMenu's onOpenChange below, which
+  // cancels opening entirely for 'hand' (which ignores hit-testing for every other interaction
+  // too) or when the click landed on empty canvas.
+  const [contextLayerId, setContextLayerId] = useState<string | null>(null);
+  const contextLayer = contextLayerId ? (layers.find((l) => l.id === contextLayerId && !l.deleted) ?? null) : null;
 
   const gizmo = useMemo(
     () => computeGizmoState(view, selectedLayerIds, layers, layerIndexMapRef.current, layerBoundsRef.current),
@@ -179,8 +224,41 @@ export function CanvasGL({
     },
   };
 
+  // A right-click on a shape that's already part of a multi-selection acts on the whole
+  // selection, matching the same rule LayerRow/GroupRow apply in the layers panel.
+  const isMultiSelected = Boolean(
+    contextLayer && selectedLayerIds.length > 1 && selectedLayerIds.includes(contextLayer.id),
+  );
+  const menuTargetIds = contextLayer ? (isMultiSelected ? selectedLayerIds : [contextLayer.id]) : [];
+  const menuVisible = contextLayer
+    ? isMultiSelected
+      ? menuTargetIds.every((id) => layers.find((l) => l.id === id)?.visible ?? true)
+      : contextLayer.visible
+    : false;
+  const moveTargets = contextLayer ? filterMoveTargets(groupOptions, menuTargetIds) : [];
+  const canGroupContextSelection = isMultiSelected;
+
   return (
-    <div
+    <ContextMenu
+      onOpenChange={(open, details) => {
+        if (!open) return;
+        // 'hand' ignores hit-testing for every other interaction too (see the Tool type), so a
+        // right-click shouldn't behave differently — let the browser's own menu show instead.
+        const event = details.event as MouseEvent | undefined;
+        if (tool === 'hand' || !event || typeof event.clientX !== 'number') {
+          details.cancel();
+          return;
+        }
+        const idx = pickLayerIndexAt(event.clientX, event.clientY);
+        const id = idx >= 0 ? (layers[idx]?.id ?? null) : null;
+        if (!id) {
+          details.cancel();
+          return;
+        }
+        setContextLayerId(id);
+      }}
+    >
+    <ContextMenuTrigger
       className={`canvas${tool === 'hand' ? ' canvas--hand' : ''}${tool === 'pen' ? ' canvas--pen' : ''}`}
       ref={wrapperRef}
       {...combinedWrapperHandlers}
@@ -276,6 +354,26 @@ export function CanvasGL({
           )}
         </div>
       </div>
-    </div>
+    </ContextMenuTrigger>
+    {contextLayer && (
+      <ContextMenuPortal>
+        <LayerContextMenuItems
+          visible={menuVisible}
+          onToggleVisible={() => onSetVisibleMany(menuTargetIds, !menuVisible)}
+          onDownload={() => onDownloadLayers(menuTargetIds, isMultiSelected ? `${menuTargetIds.length} layers` : 'Layer')}
+          downloadLabel={isMultiSelected ? `Download ${menuTargetIds.length} layers` : 'Download layer'}
+          onDelete={() => onDeleteMany(menuTargetIds)}
+          deleteLabel={isMultiSelected ? `Delete ${menuTargetIds.length} layers` : 'Delete layer'}
+          onEditPath={() => enterPathEdit(contextLayer.id)}
+          showGroupSelection={canGroupContextSelection}
+          onGroupSelected={onGroupSelected}
+          showUngroup={false}
+          onUngroup={() => {}}
+          moveTargets={moveTargets}
+          onMoveTo={(targetGroupId) => onMoveToGroup(menuTargetIds, targetGroupId)}
+        />
+      </ContextMenuPortal>
+    )}
+    </ContextMenu>
   );
 }

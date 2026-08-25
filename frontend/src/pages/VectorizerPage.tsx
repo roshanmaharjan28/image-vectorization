@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { UploadDropzone } from '../components/UploadDropzone';
 import { Toolbar } from '../components/Toolbar';
@@ -10,7 +10,14 @@ import { LayersPanel } from '../components/LayersPanel';
 import { ParamsPanel } from '../components/ParamsPanel';
 import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
-import { collectGroupIds, groupSelectedLeaves, ungroupSelectedLeaves } from '../lib/groupTree';
+import {
+  collectGroupIds,
+  groupSelectedLeaves,
+  listGroupOptions,
+  moveLeavesToGroup,
+  ungroupGroupById,
+  ungroupSelectedLeaves,
+} from '../lib/groupTree';
 import { buildGroupSvgString, buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
 import { downloadTextFile } from '../lib/download';
@@ -46,6 +53,10 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [tool, setTool] = useState<Tool>('cursor');
+  // Set by a LayersPanel row's "Edit path" context menu action — CanvasGL consumes it (entering
+  // path-edit for that layer) and immediately clears it via handleEditPathRequestHandled.
+  const [editPathRequestId, setEditPathRequestId] = useState<string | null>(null);
+  const groupOptions = useMemo(() => listGroupOptions(groupTree, layers), [groupTree, layers]);
 
   function handleToggleShowOriginal() {
     setOverlayMode((mode) => (mode === 'original' ? 'none' : 'original'));
@@ -215,6 +226,39 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setGroupTree(next);
   }, [groupTree, layers, selectedLayerIds]);
 
+  // Dissolves one specific group regardless of the current selection — used by a group row's
+  // "Ungroup" context menu action, as opposed to handleUngroupSelected above (Ctrl+Shift+G/panel
+  // button), which only ever acts on whatever's currently selected.
+  const handleUngroupGroup = useCallback(
+    (groupId: string) => {
+      const next = ungroupGroupById(groupTree, groupId);
+      if (next) setGroupTree(next);
+    },
+    [groupTree],
+  );
+
+  // "Move to" context menu action — moves a layer or whole group into an existing target group,
+  // independent of the current selection.
+  const handleMoveToGroup = useCallback(
+    (leafIds: string[], targetGroupId: string) => {
+      const next = moveLeavesToGroup(groupTree, layers, leafIds, targetGroupId);
+      if (next) setGroupTree(next);
+    },
+    [groupTree, layers],
+  );
+
+  // "Edit path" context menu action (panel or canvas) always switches to the cursor tool first —
+  // path-edit anchors don't render under the hand tool (see CanvasGL), so this guarantees they're
+  // visible regardless of which tool was active when the action was invoked.
+  const handleRequestEditPath = useCallback((id: string) => {
+    setTool('cursor');
+    setEditPathRequestId(id);
+  }, []);
+
+  const handleEditPathRequestHandled = useCallback(() => {
+    setEditPathRequestId(null);
+  }, []);
+
   // Ctrl/Cmd+G groups the selection, Ctrl/Cmd+Shift+G ungroups it — same convention as
   // Illustrator/Figma/Sketch. Skipped while a text field has focus, same guard as Delete below.
   useEffect(() => {
@@ -313,6 +357,14 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             showOriginal={showOriginal}
             showPaths={showPaths}
             tool={tool}
+            requestEditLayerId={editPathRequestId}
+            onEditPathRequestHandled={handleEditPathRequestHandled}
+            onSetVisibleMany={handleSetVisibleMany}
+            onDeleteMany={handleDeleteMany}
+            onDownloadLayers={handleDownloadGroup}
+            onGroupSelected={handleGroupSelected}
+            groupOptions={groupOptions}
+            onMoveToGroup={handleMoveToGroup}
           />
           {showParams && (
             <>
@@ -346,6 +398,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onSetVisibleMany={handleSetVisibleMany}
           onDeleteMany={handleDeleteMany}
           onDownloadGroup={handleDownloadGroup}
+          onUngroupGroup={handleUngroupGroup}
+          onMoveToGroup={handleMoveToGroup}
+          onRequestEditPath={handleRequestEditPath}
         />
       </div>
     </div>

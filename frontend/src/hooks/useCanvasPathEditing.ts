@@ -160,6 +160,7 @@ export function useCanvasPathEditing({ view, layers, onTransformLayers, canvasRe
   return {
     editingLayerId,
     pathAnchors,
+    enterPathEdit,
     exitPathEdit,
     handleCanvasDoubleClick,
     handleAnchorMouseDown,

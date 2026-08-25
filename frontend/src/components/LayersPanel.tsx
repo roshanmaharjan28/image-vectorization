@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent }
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Group, Ungroup } from 'lucide-react';
 import type { Layer, SvgMeta, TreeNode } from '../types';
-import { buildPanelRows, idsForRow } from '../lib/groupTree';
+import { buildPanelRows, idsForRow, listGroupOptions } from '../lib/groupTree';
 import { LayerRow } from './LayerRow';
 import { GroupRow } from './GroupRow';
 import { Badge } from './ui/badge';
@@ -30,6 +30,9 @@ interface Props {
   onRenameGroup: (id: string, label: string) => void;
   onGroupSelected: () => void;
   onUngroupSelected: () => void;
+  onUngroupGroup: (groupId: string) => void;
+  onMoveToGroup: (leafIds: string[], targetGroupId: string) => void;
+  onRequestEditPath: (id: string) => void;
 }
 
 // Must match the rendered height of both LayerRow.tsx and GroupRow.tsx.
@@ -59,6 +62,9 @@ export function LayersPanel({
   onRenameGroup,
   onGroupSelected,
   onUngroupSelected,
+  onUngroupGroup,
+  onMoveToGroup,
+  onRequestEditPath,
 }: Props) {
   const rows = useMemo(
     () => buildPanelRows(groupTree, layers, collapsedGroupIds),
@@ -66,6 +72,14 @@ export function LayersPanel({
   );
   const totalLayerCount = useMemo(() => layers.filter((l) => !l.deleted).length, [layers]);
   const selectedIdSet = useMemo(() => new Set(selectedLayerIds), [selectedLayerIds]);
+  const groupOptions = useMemo(() => listGroupOptions(groupTree, layers), [groupTree, layers]);
+  // Whether every currently-selected layer is visible — used by a row's context menu so
+  // Hide/Unhide reflects (and toggles) the whole selection, not just the row that was
+  // right-clicked, when the click landed inside a multi-selection.
+  const selectionAllVisible = useMemo(() => {
+    const layerMap = new Map(layers.map((l) => [l.id, l] as const));
+    return selectedLayerIds.every((id) => layerMap.get(id)?.visible ?? true);
+  }, [layers, selectedLayerIds]);
 
   // Shift-click range anchor — the index (in `rows`) of the last plain/ctrl click, extended (not
   // reset) by subsequent shift-clicks so repeated shift-clicks keep growing the same range,
@@ -264,6 +278,16 @@ export function LayersPanel({
                     onHover={onHoverLayer}
                     onRowClick={handleRowClick}
                     onChangeColor={onChangeColor}
+                    onDownload={onDownloadGroup}
+                    onRequestEditPath={onRequestEditPath}
+                    canGroupSelection={selectedLayerIds.length >= 2 && selectedIdSet.has(row.layer.id)}
+                    onGroupSelected={onGroupSelected}
+                    groupOptions={groupOptions}
+                    onMoveTo={onMoveToGroup}
+                    selectedLayerIds={selectedLayerIds}
+                    selectionAllVisible={selectionAllVisible}
+                    onSetVisibleMany={onSetVisibleMany}
+                    onDeleteMany={onDeleteMany}
                   />
                 ) : (
                   <GroupRow
@@ -285,6 +309,15 @@ export function LayersPanel({
                     onStartRename={handleGroupStartRename}
                     onRenameCommit={handleGroupRenameCommit}
                     onRenameCancel={handleGroupRenameCancel}
+                    canGroupSelection={
+                      selectedLayerIds.length >= 2 && row.leafIds.length > 0 && row.leafIds.every((id) => selectedIdSet.has(id))
+                    }
+                    onGroupSelected={onGroupSelected}
+                    onUngroup={onUngroupGroup}
+                    groupOptions={groupOptions}
+                    onMoveTo={onMoveToGroup}
+                    selectedLayerIds={selectedLayerIds}
+                    selectionAllVisible={selectionAllVisible}
                   />
                 )}
               </div>

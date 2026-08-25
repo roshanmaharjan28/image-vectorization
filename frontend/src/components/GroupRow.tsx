@@ -1,10 +1,12 @@
 import { memo, useEffect, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { ChevronRight, Download, Eye, EyeOff, Trash2 } from 'lucide-react';
-import { ROW_BASE_PADDING_PX, ROW_INDENT_PX } from '../lib/groupTree';
+import { ROW_BASE_PADDING_PX, ROW_INDENT_PX, filterMoveTargets, type GroupOption } from '../lib/groupTree';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
+import { ContextMenu, ContextMenuPortal, ContextMenuTrigger } from './ui/context-menu';
+import { LayerContextMenuItems } from './LayerContextMenuItems';
 
 interface Props {
   id: string;
@@ -25,6 +27,13 @@ interface Props {
   onStartRename: (id: string) => void;
   onRenameCommit: (id: string, label: string) => void;
   onRenameCancel: () => void;
+  canGroupSelection: boolean;
+  onGroupSelected: () => void;
+  onUngroup: (groupId: string) => void;
+  groupOptions: GroupOption[];
+  onMoveTo: (leafIds: string[], targetGroupId: string) => void;
+  selectedLayerIds: string[];
+  selectionAllVisible: boolean;
 }
 
 export const GroupRow = memo(function GroupRow({
@@ -46,7 +55,20 @@ export const GroupRow = memo(function GroupRow({
   onStartRename,
   onRenameCommit,
   onRenameCancel,
+  canGroupSelection,
+  onGroupSelected,
+  onUngroup,
+  groupOptions,
+  onMoveTo,
+  selectedLayerIds,
+  selectionAllVisible,
 }: Props) {
+  // A right-click inside an existing multi-selection acts on the whole selection, not just this
+  // group's own members — mirrors the same rule in LayerRow.
+  const isMultiSelected = isSelected && selectedLayerIds.length > 1;
+  const menuTargetIds = isMultiSelected ? selectedLayerIds : leafIds;
+  const menuVisible = isMultiSelected ? selectionAllVisible : allVisible;
+  const moveTargets = filterMoveTargets(groupOptions, menuTargetIds);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -68,7 +90,8 @@ export const GroupRow = memo(function GroupRow({
   }
 
   return (
-    <div
+    <ContextMenu>
+    <ContextMenuTrigger
       className={cn(
         'box-border flex h-full items-center gap-2.5 border-b border-border pr-4',
         isSelected && 'bg-muted shadow-[inset_3px_0_0_var(--primary)]',
@@ -153,6 +176,23 @@ export const GroupRow = memo(function GroupRow({
       >
         <Trash2 />
       </Button>
-    </div>
+    </ContextMenuTrigger>
+    <ContextMenuPortal>
+      <LayerContextMenuItems
+        visible={menuVisible}
+        onToggleVisible={() => onSetVisible(menuTargetIds, !menuVisible)}
+        onDownload={() => onDownload(menuTargetIds, isMultiSelected ? `${menuTargetIds.length} layers` : label)}
+        downloadLabel={isMultiSelected ? `Download ${menuTargetIds.length} layers` : 'Download group'}
+        onDelete={() => onDelete(menuTargetIds)}
+        deleteLabel={isMultiSelected ? `Delete ${menuTargetIds.length} layers` : 'Delete group'}
+        showGroupSelection={canGroupSelection}
+        onGroupSelected={onGroupSelected}
+        showUngroup={!isMultiSelected}
+        onUngroup={() => onUngroup(id)}
+        moveTargets={moveTargets}
+        onMoveTo={(targetGroupId) => onMoveTo(menuTargetIds, targetGroupId)}
+      />
+    </ContextMenuPortal>
+    </ContextMenu>
   );
 });
