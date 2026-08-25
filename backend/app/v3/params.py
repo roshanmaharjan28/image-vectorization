@@ -3,10 +3,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class VectorizeParamsV3:
-    """Preprocessing/color-reduction defaults shared with v2, plus vtracer
-    tracing params shared with v1. The vtracer fields below are user-tunable
-    from the frontend params panel; defaults match vtracer's own effective
-    defaults so an unmodified request behaves the same as before tuning existed."""
+    """Preprocessing/color-reduction defaults for the shared app/quantize step, plus vtracer
+    tracing params shared with v1. The vtracer fields below are user-tunable from the frontend
+    params panel; defaults match vtracer's own effective defaults so an unmodified request behaves
+    the same as before tuning existed.
+
+    Independent of VectorizeParamsV2 on purpose: v2 quantizes with an edge-preserving filter and
+    postprocesses the traced result, so its defaults are tuned for a different pipeline and the two
+    must be free to drift apart."""
 
     max_dimension: int = 2000
     min_dimension: int = 64

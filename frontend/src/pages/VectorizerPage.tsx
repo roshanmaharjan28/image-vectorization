@@ -20,9 +20,9 @@ import {
   ungroupSelectedLeaves,
 } from '../lib/groupTree';
 import { buildGroupSvgString, buildSvgString, setLayerFill } from '../lib/svgSerialize';
-import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
+import { appendVectorizeParams, defaultParamsFor, fetchV2Presets } from '../lib/vectorizeParams';
 import { downloadTextFile } from '../lib/download';
-import type { GroupingMode, Layer, Stage, SvgMeta, Tool, TreeNode, VectorizeParams } from '../types';
+import type { GroupingMode, Layer, Stage, SvgMeta, Tool, TreeNode, V2PresetInfo, VectorizeParams } from '../types';
 import '../App.css';
 import { CanvasGL } from '../components/CanvasGL';
 
@@ -37,7 +37,6 @@ interface VectorizerPageProps {
 type OverlayMode = 'none' | 'original' | 'paths';
 
 export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
-  const isV3 = apiEndpoint.includes('/v3/');
   const [stage, setStage] = useState<Stage>('empty');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -48,9 +47,33 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [grouping, setGrouping] = useState<GroupingMode>('none');
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
-  const [params, setParams] = useState<VectorizeParams>(isV3 ? DEFAULT_V3_PARAMS : DEFAULT_V1_PARAMS);
+  // Per-pipeline defaults: each endpoint's Form defaults differ, and only v2 carries the `v2`
+  // sub-object of pre/post-processing params (whose presence is what makes ParamsPanel show them).
+  const [params, setParams] = useState<VectorizeParams>(() => defaultParamsFor(apiEndpoint));
+  const [v2Presets, setV2Presets] = useState<V2PresetInfo[]>([]);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [tool, setTool] = useState<Tool>('cursor');
+
+  // The preset list lives on the backend that owns the values (GET /api/v2/presets), so the
+  // dropdown can't drift from what a vectorize call would actually apply. v1/v3 have no presets;
+  // a failed fetch just leaves the dropdown with "Custom" and the sliders still work.
+  useEffect(() => {
+    if (!apiEndpoint.includes('/v2/')) {
+      setV2Presets([]);
+      return;
+    }
+    let cancelled = false;
+    fetchV2Presets()
+      .then((presets) => {
+        if (!cancelled) setV2Presets(presets);
+      })
+      .catch(() => {
+        if (!cancelled) setV2Presets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiEndpoint]);
   // Set by a LayersPanel row's "Edit path" context menu action — CanvasGL consumes it (entering
   // path-edit for that layer) and immediately clears it via handleEditPathRequestHandled.
   const [editPathRequestId, setEditPathRequestId] = useState<string | null>(null);
@@ -371,6 +394,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             onRevectorize={handleVectorize}
             canRevectorize={Boolean(imageFile)}
             isVectorizing={stage === 'vectorizing'}
+            v2Presets={v2Presets}
           />
         </div>
         <LayersPanel

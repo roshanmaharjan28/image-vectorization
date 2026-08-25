@@ -114,9 +114,12 @@ def build_grouped_svg(
 
 def _quantize_for_segmentation(rgba: np.ndarray) -> np.ndarray:
     """v1 has no color-quantization step of its own; for opencv segmentation only (never for
-    what actually gets vectorized) this runs v2's preprocessing+posterization on a disposable
-    copy purely to derive discrete color regions, then resizes the resulting labels back to the
-    original resolution so they align with the raw image v1 vectorizes."""
+    what actually gets vectorized) this runs the shared app/quantize preprocessing+posterization on
+    a disposable copy purely to derive discrete color regions, then resizes the resulting labels
+    back to the original resolution so they align with the raw image v1 vectorizes.
+
+    v2 and v3 skip this: both hand in their own already-quantized label map (see each router's
+    `quantized_source_provider`), so their groups describe the regions they actually traced."""
     params = QuantizeParams()
     bgr, opaque_mask, scale = preprocess(rgba, params)
     label_map, _palette = reduce_colors(bgr, opaque_mask, params)

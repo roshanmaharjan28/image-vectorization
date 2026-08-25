@@ -60,4 +60,54 @@ export interface VectorizeParams {
   cornerThreshold: number;
   lengthThreshold: number;
   spliceThreshold: number;
+  /** v2's own pre/post-processing stages. Present only for the v2 endpoint — its absence is what
+   *  tells ParamsPanel not to render those sections, and appendVectorizeParams not to send the
+   *  fields (v1/v3 would reject them). Mirrors backend/app/v2/params.py. */
+  v2?: V2Params;
+}
+
+// "adjacent" only combines consecutive same-fill paths, which vtracer emits one colour layer at a
+// time, so the merge cannot change what any pixel renders as. "all" reaches across stacking
+// positions for a lower layer count and can change occlusion. See backend/app/v2/postprocess.py.
+export type MergeSameFill = 'none' | 'adjacent' | 'all';
+
+/** One entry of GET /api/v2/presets. The backend serves these rather than the frontend keeping its
+ *  own table, so the values the sliders show are the values the backend will actually use.
+ *
+ *  `params` is a complete VectorizeParams, not just the v2 sub-object: presets set trace fields
+ *  too (the flat-colour ones switch to hierarchical="cutout"), and since this client always sends
+ *  every field explicitly, a preset that only carried its v2 half would be silently overridden
+ *  back to the previous trace settings. */
+export interface V2PresetInfo {
+  id: string;
+  label: string;
+  description: string;
+  params: VectorizeParams;
+}
+
+/** Selected-but-edited state. The backend accepts this id too, where it means "use exactly the
+ *  fields I sent" — which is already what the frontend does, since it always sends every field. */
+export const CUSTOM_PRESET_ID = 'custom';
+
+export interface V2Params {
+  /** Which named preset these values came from, or CUSTOM_PRESET_ID once any control is touched.
+   *  Purely a label: every field below is sent explicitly, so this never changes the result. */
+  presetId: string;
+  // preprocess: raster -> flat-colour regions
+  denoiseStrength: number;
+  colorCount: number;
+  smoothLabels: boolean;
+  minRegionArea: number;
+  // postprocess: traced svg -> fewer, smoother paths
+  minPathArea: number;
+  simplifyTolerance: number;
+  maxFitError: number;
+  smoothCurves: boolean;
+  smoothCornerAngle: number;
+  /** vtracer does not preserve the palette the preprocess stage chose, so without this the
+   *  output's colour count is unbounded regardless of colorCount. See backend postprocess. */
+  snapFillsToPalette: boolean;
+  mergeSameFill: MergeSameFill;
+  precision: number;
+  seamStrokeWidth: number;
 }

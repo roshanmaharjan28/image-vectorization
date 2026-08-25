@@ -35,6 +35,17 @@ def reduce_colors(
             sample = sample[idx]
 
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+        # KMEANS_PP_CENTERS seeds itself from OpenCV's *global* RNG, which nothing here was
+        # setting - so the same image and the same parameters produced a different palette, and so
+        # a materially different SVG, on every call. On one measurement that swung a preset's
+        # error from 11.37 to 14.11 between two runs of identical input. Pinning the seed makes a
+        # re-vectorize reproducible, which the UI depends on to mean anything: without it, a user
+        # nudging one slider cannot tell their change apart from the reroll it triggered.
+        #
+        # cv2.setRNGSeed is process-global, so this pins the sequence rather than isolating it;
+        # concurrent kmeans calls in other threads can still interleave. That makes repeated runs
+        # reproducible in the single-request case and no worse than before in any other.
+        cv2.setRNGSeed(0)
         _compactness, _sample_labels, centers = cv2.kmeans(
             sample, effective_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
         )
@@ -62,6 +73,21 @@ def reduce_colors(
     palette_bgr = _lab_centers_to_bgr(centers[order])
 
     return label_map, palette_bgr
+
+
+def apply_palette(
+    bgr: np.ndarray, label_map: np.ndarray, palette: list[tuple[int, int, int]]
+) -> np.ndarray:
+    """Paints each labelled pixel with its palette colour, leaving excluded (-1) pixels as they
+    were. The flat-colour raster this produces is what the tracers actually hand to vtracer."""
+    if not palette:
+        return bgr.copy()
+
+    palette_arr = np.array(palette, dtype=np.uint8)
+    quantized = bgr.copy()
+    valid = label_map >= 0
+    quantized[valid] = palette_arr[label_map[valid]]
+    return quantized
 
 
 def _merge_close_centers(

@@ -7,11 +7,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.grouping.router_support import finalize_vectorize_response
+from app.v2.router import router as v2_router
 from app.v3.router import router as v3_router
 
 load_dotenv()
 
 app = FastAPI(title="Image Vectorization API")
+app.include_router(v2_router, prefix="/api/v2")
 app.include_router(v3_router, prefix="/api/v3")
 
 cors_origins = [

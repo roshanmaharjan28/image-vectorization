@@ -17,7 +17,7 @@ _STYLE_FILL_RE = re.compile(r"fill\s*:\s*([^;]+)")
 _D_TOKEN_RE = re.compile(r"([MLCQZmlcqz])([^MLCQZmlcqz]*)")
 _NUM_RE = re.compile(r"-?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
-# v2's own builder and vtracer both use absolute M/L/C/Q/Z only. Any other command (arcs,
+# vtracer and v2's postprocess serializer both emit absolute M/L/C/Q/Z only. Any other command (arcs,
 # relative moves, shorthand curves) falls outside what `bbox_from_path_d` below can safely
 # measure, so such paths are excluded from bbox-based nesting (never from the SVG itself, and
 # never from receiving a data-region-index).

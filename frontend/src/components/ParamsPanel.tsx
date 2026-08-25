@@ -1,9 +1,10 @@
 import { Accordion as AccordionPrimitive } from '@base-ui/react/accordion';
-import type { VectorizeParams } from '../types';
+import { CUSTOM_PRESET_ID, type MergeSameFill, type V2Params, type V2PresetInfo, type VectorizeParams } from '../types';
 import { Accordion, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import { Slider } from './ui/slider';
+import { Switch } from './ui/switch';
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group';
 
 interface Props {
@@ -12,6 +13,9 @@ interface Props {
   onRevectorize: () => void;
   canRevectorize: boolean;
   isVectorizing: boolean;
+  /** v2 only, from GET /api/v2/presets. Empty until the fetch resolves (or if it failed), which
+   *  just means the dropdown offers "Custom" alone — the sliders still work. */
+  v2Presets?: V2PresetInfo[];
 }
 
 interface Option<T extends string> {
@@ -90,8 +94,236 @@ function SliderField({
   );
 }
 
-export function ParamsPanel({ params, onChange, onRevectorize, canRevectorize, isVectorizing }: Props) {
+function SwitchField({
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="text-xs">
+        {label} <span className="text-muted-foreground">({hint})</span>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} size="sm" />
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: string }) {
+  return <div className="mt-2 mb-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{children}</div>;
+}
+
+// The named starting points from backend/app/v2/presets.py. Picking one overwrites every v2 dial
+// with that preset's values; touching any dial afterwards switches the label to "Custom" without
+// changing anything (see the onChange wrapper in ParamsPanel).
+function PresetField({
+  v2,
+  presets,
+  onSelect,
+  disabled,
+}: {
+  v2: V2Params;
+  presets: V2PresetInfo[];
+  onSelect: (patch: Partial<VectorizeParams>) => void;
+  disabled: boolean;
+}) {
+  const selected = presets.find((preset) => preset.id === v2.presetId);
+  return (
+    <div className="mb-4">
+      <div className="mb-2 text-xs">Preset</div>
+      <select
+        value={v2.presetId}
+        disabled={disabled}
+        onChange={(event) => {
+          const picked = presets.find((preset) => preset.id === event.target.value);
+          // Spread the whole preset, trace fields included, rather than patching a few dials: a
+          // preset is a complete parameter set, so carrying anything over from the previous
+          // selection would produce a state that is neither preset while being labelled as one.
+          onSelect(picked ? { ...picked.params } : { v2: { ...v2, presetId: CUSTOM_PRESET_ID } });
+        }}
+        className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs disabled:opacity-50"
+      >
+        {presets.map((preset) => (
+          <option key={preset.id} value={preset.id}>
+            {preset.label}
+          </option>
+        ))}
+        <option value={CUSTOM_PRESET_ID}>Custom</option>
+      </select>
+      {selected && <div className="mt-1.5 text-xs text-muted-foreground">{selected.description}</div>}
+    </div>
+  );
+}
+
+// v2's own stages (see backend/app/v2/params.py). Rendered only when `params.v2` exists, i.e. on
+// the v2 route — v1 and v3 have no such stages and their endpoints reject the fields.
+function V2Sections({
+  v2,
+  presets,
+  onChange,
+  onSelectPreset,
+  disabled,
+}: {
+  v2: V2Params;
+  presets: V2PresetInfo[];
+  onChange: (patch: Partial<V2Params>) => void;
+  onSelectPreset: (patch: Partial<VectorizeParams>) => void;
+  disabled: boolean;
+}) {
+  return (
+    <>
+      <SectionLabel>Preset</SectionLabel>
+      <PresetField v2={v2} presets={presets} onSelect={onSelectPreset} disabled={disabled} />
+
+      <SectionLabel>Preprocess</SectionLabel>
+      <SliderField
+        label="Denoise"
+        hint="Edge-preserving"
+        value={v2.denoiseStrength}
+        min={0}
+        max={10}
+        step={1}
+        onChange={(v) => onChange({ denoiseStrength: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Colors"
+        hint="Fewer layers"
+        value={v2.colorCount}
+        min={0}
+        max={64}
+        step={1}
+        onChange={(v) => onChange({ colorCount: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Min Region"
+        hint="px, absorbed"
+        value={v2.minRegionArea}
+        min={0}
+        max={200}
+        step={1}
+        onChange={(v) => onChange({ minRegionArea: v })}
+        disabled={disabled}
+      />
+      <SwitchField
+        label="Smooth Regions"
+        hint="De-staircase"
+        checked={v2.smoothLabels}
+        onChange={(v) => onChange({ smoothLabels: v })}
+        disabled={disabled}
+      />
+
+      <SectionLabel>Postprocess</SectionLabel>
+      <SliderField
+        label="Min Path Area"
+        hint="px², dropped"
+        value={v2.minPathArea}
+        min={0}
+        max={200}
+        step={1}
+        onChange={(v) => onChange({ minPathArea: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Simplify"
+        hint="px, structure"
+        value={v2.simplifyTolerance}
+        min={0}
+        max={3}
+        step={0.1}
+        onChange={(v) => onChange({ simplifyTolerance: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Fit Error"
+        hint="px, max deviation"
+        value={v2.maxFitError}
+        min={0.1}
+        max={3}
+        step={0.1}
+        onChange={(v) => onChange({ maxFitError: v })}
+        disabled={disabled}
+      />
+      <SwitchField
+        label="Smooth Curves"
+        hint="Refit as beziers"
+        checked={v2.smoothCurves}
+        onChange={(v) => onChange({ smoothCurves: v })}
+        disabled={disabled}
+      />
+      <SwitchField
+        label="Snap To Palette"
+        hint="Caps colour count"
+        checked={v2.snapFillsToPalette}
+        onChange={(v) => onChange({ snapFillsToPalette: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Corner Angle"
+        hint="Keep sharp above"
+        value={v2.smoothCornerAngle}
+        min={0}
+        max={180}
+        step={1}
+        onChange={(v) => onChange({ smoothCornerAngle: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Precision"
+        hint="Decimals"
+        value={v2.precision}
+        min={0}
+        max={6}
+        step={1}
+        onChange={(v) => onChange({ precision: v })}
+        disabled={disabled}
+      />
+      <SliderField
+        label="Seam Stroke"
+        hint="px, closes gaps"
+        value={v2.seamStrokeWidth}
+        min={0}
+        max={3}
+        step={0.1}
+        onChange={(v) => onChange({ seamStrokeWidth: v })}
+        disabled={disabled}
+      />
+      <div className="mb-2 text-xs">
+        Merge Same Fill <span className="text-muted-foreground">(fewer layers)</span>
+      </div>
+      <SegmentedControl<MergeSameFill>
+        value={v2.mergeSameFill}
+        options={[
+          { label: 'None', value: 'none' },
+          { label: 'Adjacent', value: 'adjacent' },
+          { label: 'All', value: 'all' },
+        ]}
+        onChange={(v) => onChange({ mergeSameFill: v })}
+        disabled={disabled}
+      />
+    </>
+  );
+}
+
+export function ParamsPanel({
+  params,
+  onChange,
+  onRevectorize,
+  canRevectorize,
+  isVectorizing,
+  v2Presets = [],
+}: Props) {
   const disabled = isVectorizing;
+  const v2 = params.v2;
 
   return (
     <aside className="absolute top-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-72 flex-col">
@@ -200,6 +432,26 @@ export function ParamsPanel({ params, onChange, onRevectorize, canRevectorize, i
                   onChange={(v) => onChange({ spliceThreshold: v })}
                   disabled={disabled}
                 />
+
+                {v2 && (
+                  <V2Sections
+                    v2={v2}
+                    presets={v2Presets}
+                    onSelectPreset={onChange}
+                    onChange={(patch) =>
+                      onChange({
+                        v2: {
+                          ...v2,
+                          ...patch,
+                          // Any patch that isn't itself a preset selection means the dials no
+                          // longer describe the named preset, so the label has to drop to Custom.
+                          presetId: patch.presetId ?? CUSTOM_PRESET_ID,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                  />
+                )}
               </div>
             </ScrollArea>
             <div className="shrink-0 p-4 pt-3">

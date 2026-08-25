@@ -6,7 +6,7 @@ import vtracer
 from PIL import Image
 
 from app.grouping.imageutil import resize_label_map
-from app.quantize.color_reduce import reduce_colors
+from app.quantize.color_reduce import apply_palette, reduce_colors
 from app.quantize.preprocess import decode_image, preprocess
 
 from .params import VectorizeParamsV3
@@ -23,7 +23,7 @@ def quantize_for_v3(raw: bytes, params: VectorizeParamsV3) -> tuple[np.ndarray, 
 
     bgr, opaque_mask, scale = preprocess(rgba, params)
     label_map, palette = reduce_colors(bgr, opaque_mask, params)
-    quantized_bgr = _apply_palette(bgr, label_map, palette)
+    quantized_bgr = apply_palette(bgr, label_map, palette)
     alpha = opaque_mask.astype(np.uint8) * 255
 
     if scale != 1.0:
@@ -39,7 +39,7 @@ def quantize_for_v3(raw: bytes, params: VectorizeParamsV3) -> tuple[np.ndarray, 
 
 
 def vectorize_image_v3(raw: bytes, params: VectorizeParamsV3 = VectorizeParamsV3()) -> str:
-    """v2's preprocessing + color-reduction stages (denoise, posterize) feed a
+    """The shared app/quantize preprocessing + color-reduction stages (denoise, posterize) feed a
     quantized raster into vtracer, which handles region/contour/curve fitting."""
     rgba_out, _label_map = quantize_for_v3(raw, params)
     png_bytes = _encode_png(rgba_out)
@@ -57,19 +57,6 @@ def vectorize_image_v3(raw: bytes, params: VectorizeParamsV3 = VectorizeParamsV3
         length_threshold=params.length_threshold,
         splice_threshold=params.splice_threshold,
     )
-
-
-def _apply_palette(
-    bgr: np.ndarray, label_map: np.ndarray, palette: list[tuple[int, int, int]]
-) -> np.ndarray:
-    if not palette:
-        return bgr.copy()
-
-    palette_arr = np.array(palette, dtype=np.uint8)
-    quantized = bgr.copy()
-    valid = label_map >= 0
-    quantized[valid] = palette_arr[label_map[valid]]
-    return quantized
 
 
 def _encode_png(rgba: np.ndarray) -> bytes:

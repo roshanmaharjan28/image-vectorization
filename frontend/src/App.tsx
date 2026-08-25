@@ -20,6 +20,9 @@ function App() {
           <NavLink to="/v1" className={navLinkClass}>
             v1 (vtracer)
           </NavLink>
+          <NavLink to="/v2" className={navLinkClass}>
+            v2 (pre + vtracer + post)
+          </NavLink>
           <NavLink to="/v3" className={navLinkClass}>
             v3 (preprocess + vtracer)
           </NavLink>
@@ -28,6 +31,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/v1" replace />} />
             <Route path="/v1" element={<VectorizerPage apiEndpoint="/api/vectorize" />} />
+            <Route path="/v2" element={<VectorizerPage apiEndpoint="/api/v2/vectorize" />} />
             <Route path="/v3" element={<VectorizerPage apiEndpoint="/api/v3/vectorize" />} />
           </Routes>
         </div>

@@ -3,9 +3,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class QuantizeParams:
-    """Tunable defaults for the shared preprocess/color-reduce quantization step used by v3
-    and by v1's opencv grouping mode. No tuning UI yet - these are hardcoded entry points a
-    future request-driven config could override without a rewrite."""
+    """Tunable defaults for the shared preprocess/color-reduce quantization step used by v3 and by
+    v1's opencv grouping mode. No tuning UI yet - these are hardcoded entry points a future
+    request-driven config could override without a rewrite.
+
+    v2 reads the same modules but supplies its own VectorizeParamsV2 instead (the fields are
+    duck-typed by name), because its quantization settings are request-tunable."""
 
     max_dimension: int = 1600
     min_dimension: int = 64
