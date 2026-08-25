@@ -10,6 +10,7 @@ import { LayersPanel } from '../components/LayersPanel';
 import { ParamsPanel } from '../components/ParamsPanel';
 import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
+import { collectGroupIds } from '../lib/groupTree';
 import { buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
 import { downloadTextFile } from '../lib/download';
@@ -91,7 +92,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       setMeta(parsed.meta);
       setLayers(parsed.layers);
       setGroupTree(data.groups ?? null);
-      setCollapsedGroupIds(new Set());
+      // Groups start collapsed rather than expanded, so a freshly vectorized image opens on the
+      // grouped overview instead of one giant flat/expanded layer list.
+      setCollapsedGroupIds(data.groups ? new Set(collectGroupIds(data.groups)) : new Set());
       setStage('vectorized');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Vectorization failed');

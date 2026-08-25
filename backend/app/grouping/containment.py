@@ -59,6 +59,31 @@ class SegmentSpan:
     leaf_indices: list[int] = field(default_factory=list)
 
 
+def find_parents(bboxes: list[BBox], params: ContainmentParams) -> dict[int, int]:
+    """For each bbox, finds the smallest-area *other* bbox that contains it (per `_contains`) and
+    returns `{child_index: parent_index}` for every bbox that has one. Shared by
+    `build_segment_forest` (nesting already-final segments into a display tree) and
+    `fastsam_segment`'s pre-vectorize merge step (folding same-object sub-detections into their
+    top-level container before they ever become separate segments) — area strictly decreases
+    along any parent chain, so a chain built from this map can never cycle."""
+    n = len(bboxes)
+    parent: dict[int, int] = {}
+    for j in range(n):
+        best_parent: int | None = None
+        best_area = math.inf
+        for i in range(n):
+            if i == j:
+                continue
+            if _contains(bboxes[i], bboxes[j], params):
+                area_i = _area(bboxes[i])
+                if area_i < best_area:
+                    best_area = area_i
+                    best_parent = i
+        if best_parent is not None:
+            parent[j] = best_parent
+    return parent
+
+
 def build_segment_forest(
     spans: list[SegmentSpan], params: ContainmentParams, ids: IdAllocator
 ) -> list[TreeNode]:
@@ -70,20 +95,7 @@ def build_segment_forest(
     wrapped in a redundant single-child group); a segment that ends up with neither leaves nor
     children (its mask produced zero paths and it had no sub-segments) is dropped entirely."""
     n = len(spans)
-    parent: dict[int, int] = {}
-    for j in range(n):
-        best_parent: int | None = None
-        best_area = math.inf
-        for i in range(n):
-            if i == j:
-                continue
-            if _contains(spans[i].bbox, spans[j].bbox, params):
-                area_i = _area(spans[i].bbox)
-                if area_i < best_area:
-                    best_area = area_i
-                    best_parent = i
-        if best_parent is not None:
-            parent[j] = best_parent
+    parent = find_parents([s.bbox for s in spans], params)
 
     children_of: dict[int, list[int]] = {}
     for child, container in parent.items():

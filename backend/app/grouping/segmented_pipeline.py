@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 # back to one plain, ungrouped vectorize call, the same outcome as finding zero segments.
 MAX_SEGMENTS = 150
 
+# FastSAM's mask boundary rarely lands pixel-exactly on a glyph/shape's true (anti-aliased) edge
+# the way opencv's color-derived masks do, so vectorizing each mask independently traces a thin
+# sliver of edge pixels caught between the two boundaries as its own tiny path — multiplying a
+# single real shape into several. vtracer's own speckle filter is the right tool for exactly this
+# (small, spurious regions), but its default (2px) is tuned for whole-image tracing and is far too
+# low to catch an elongated boundary sliver. This floor is applied only to fastsam's per-segment
+# calls — opencv's masks already align with real color edges and don't need it.
+FASTSAM_MIN_FILTER_SPECKLE = 16
+
 
 def build_grouped_svg(
     image_bytes: bytes,
@@ -63,6 +72,10 @@ def build_grouped_svg(
             raise ValueError("could not decode image bytes for fastsam grouping")
         masks = fastsam_segment.segment_masks(image_bgr)
         containment_params = fastsam_segment.FastSamParams().containment
+        # vtracer_kwargs = {
+        #     **vtracer_kwargs,
+        #     "filter_speckle": max(vtracer_kwargs.get("filter_speckle", 0), FASTSAM_MIN_FILTER_SPECKLE),
+        # }
     else:
         raise ValueError(f"unknown grouping mode: {grouping!r}")
 
