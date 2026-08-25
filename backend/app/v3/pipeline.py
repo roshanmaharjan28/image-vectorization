@@ -6,8 +6,8 @@ import vtracer
 from PIL import Image
 
 from app.grouping.imageutil import resize_label_map
-from app.v2.color_reduce import reduce_colors
-from app.v2.preprocess import decode_image, preprocess
+from app.quantize.color_reduce import reduce_colors
+from app.quantize.preprocess import decode_image, preprocess
 
 from .params import VectorizeParamsV3
 

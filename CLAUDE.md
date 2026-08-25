@@ -29,21 +29,30 @@ The `.claude/launch.json` config runs both servers for browser-preview purposes 
 
 ## Architecture
 
-### Backend: three parallel vectorization pipelines
+### Backend: two parallel vectorization pipelines
 
-`backend/app/main.py` mounts three independent implementations, each reachable at its own prefix and exercised by its own tab in the frontend nav (`/v1`, `/v2`, `/v3` in `App.tsx`):
+`backend/app/main.py` mounts two independent implementations, each reachable at its own prefix and exercised by its own tab in the frontend nav (`/v1`, `/v3` in `App.tsx`):
 
 - **v1** — `POST /api/vectorize` (defined inline in `main.py`). Raw pass-through to the `vtracer` library with user-tunable trace parameters (colormode, mode, corner/length/splice thresholds, etc.).
-- **v2** — `backend/app/v2/`, `POST /api/v2/vectorize`. A from-scratch pipeline that does NOT use vtracer for tracing: `preprocess.py` (resize/denoise/alpha-mask) → `color_reduce.py` (k-means posterization) → `regions.py` (connected-component extraction with holes) → `simplify.py` (Douglas-Peucker) → `bezier_fit.py` (curve fitting) → `svg_build.py` (path/document assembly). No tuning UI exists for it yet; params are hardcoded in `v2/params.py`.
-- **v3** — `backend/app/v3/`, `POST /api/v3/vectorize`. A hybrid: reuses v2's `preprocess.py` + `color_reduce.py` to quantize the image, then hands the quantized PNG to vtracer for the actual region/contour/curve tracing (same tunable trace params as v1, see `v3/params.py`).
+- **v3** — `backend/app/v3/`, `POST /api/v3/vectorize`. A hybrid: reuses `app/quantize/preprocess.py` + `app/quantize/color_reduce.py` to quantize the image, then hands the quantized PNG to vtracer for the actual region/contour/curve tracing (same tunable trace params as v1, see `v3/params.py`).
 
-When changing preprocessing/color-reduction behavior, remember v2 and v3 share those modules (`app/v2/preprocess.py`, `app/v2/color_reduce.py`) — a change there affects both pipelines.
+`backend/app/quantize/` (formerly the v2 pipeline, now removed) holds shared quantization utilities used by v3 and by v1's `grouping=opencv` mode (`app/grouping/segmented_pipeline.py`): `preprocess.py` (resize/denoise/alpha-mask), `color_reduce.py` (k-means posterization), and `params.py` (`QuantizeParams`, the frozen dataclass those two read their settings from). There is no `/api/v2/vectorize` route or standalone pipeline anymore — don't re-add one without checking what already imports these modules.
 
-Each pipeline's params are a frozen dataclass (`VectorizeParamsV2`/`V3`) with defaults chosen to match vtracer's own effective defaults, so an un-tuned request behaves the same as before tuning existed.
+Each stage's params are a frozen dataclass (`QuantizeParams` for the shared quantization step, `VectorizeParamsV3` for v3's vtracer trace step) with defaults chosen to match vtracer's own effective defaults, so an un-tuned request behaves the same as before tuning existed.
+
+### Grouping: segmenting the source image into a layer/group tree
+
+`grouping` (`'none' | 'opencv' | 'fastsam'`, `GroupingMode` in both `backend/app/grouping/schema.py` and frontend `types.ts`) is a form field on v1's and v3's vectorize requests. Both routers hand it to the one shared entry point, `app/grouping/router_support.py`'s `finalize_vectorize_response` — `grouping="none"` skips the grouping package entirely, so the default path has no added cost and byte-identical output to before grouping existed.
+
+`app/grouping/segmented_pipeline.py`'s `build_grouped_svg` segments the *source image* before vectorizing (not the flat path list after), so each path's group membership falls out of which mask it was traced from rather than a lossy post-hoc match: `opencv_segment.py` derives masks from connected components within the color-quantized `label_map` (reusing `app/quantize/preprocess.py` + `color_reduce.py`, quantizing a disposable copy for v1 since it has none of its own); `fastsam_segment.py` runs Ultralytics FastSAM instance segmentation on the raw raster instead. Either way, each mask is vectorized independently (`masked_vectorize.py`) and the per-segment SVGs are recombined (`svg_merge.py`) into one document; `containment.py` turns each mask's bbox into a nesting forest (a mask inside another's bbox becomes its child group) that becomes the response's `groups` tree. Segmentation that finds nothing worth grouping, or blows past `MAX_SEGMENTS` (150), returns `None` and the caller silently falls back to one plain ungrouped vectorize call — an expected outcome, not an error.
+
+FastSAM depends on `ultralytics`, currently commented out of `backend/requirements.txt` — `grouping=fastsam` will fail at import time until it's reinstalled and a `FastSAM-s.pt` weights file is available (path configurable via `FASTSAM_WEIGHTS_PATH`).
+
+On the frontend, `lib/groupTree.ts` turns the backend's `TreeNode[]` (or `null`, for `grouping=none`) plus the flat `Layer[]` into the `LayersPanel`'s row list, and owns all tree mutation: manual group/ungroup from a multi-select, per-row "move to group" / "move up a level" (via context menus in `LayerContextMenuItems.tsx`), and a completeness pass that guarantees every non-deleted layer appears exactly once even if the backend's coverage is partial. Manual groups get a client-only `manual-group-N` id and coexist in the same tree shape as backend-derived ones. Rectangular marquee selection lives in `hooks/useCanvasInteractions.ts` (hit-tested against the WebGL scene, not the DOM).
 
 ### Frontend: SVG parsed into an editable layer list, rendered on WebGL
 
-Flow in `pages/VectorizerPage.tsx` (the only page, parameterized by `apiEndpoint` for v1/v2/v3):
+Flow in `pages/VectorizerPage.tsx` (the only page, parameterized by `apiEndpoint` for v1/v3):
 
 1. Upload → POST to the selected pipeline's endpoint → get back one `<svg>` string.
 2. `lib/svgParse.ts` parses that string into `SvgMeta` (width/height/viewBox) + a flat `Layer[]` (one per top-level path/shape, each with `id`, `fill`, `attrs` incl. `d`, `visible`, `deleted`, and a cumulative edit `transform` matrix).
@@ -73,4 +82,4 @@ CanvasGL itself only wires state together; the real logic is split across:
 
 - Soft-delete: removing a layer sets `deleted: true` + `visible: false` rather than removing it from the array, so the layer list identity is stable and downstream memoization (triangulation, palette texture) doesn't have to rebuild.
 - `OverlayMode` in `VectorizerPage.tsx` (`'none' | 'original' | 'paths'`) is likewise one value instead of two booleans, since "show original" and "show paths outline" are mutually exclusive overlays.
-- Backend param dataclasses are frozen and versioned per pipeline (`VectorizeParamsV2`, `VectorizeParamsV3`) rather than shared/mutated, so tuning one pipeline can't silently affect another.
+- Backend param dataclasses are frozen and versioned per pipeline (`VectorizeParamsV2`, `VectorizeParamsV3`) rather than shared/mutated, so tuning one stage can't silently affect another.

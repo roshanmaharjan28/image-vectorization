@@ -16,7 +16,7 @@ class OpenCvSegmentParams:
 
 def segment_masks(label_map: np.ndarray, params: OpenCvSegmentParams = OpenCvSegmentParams()) -> list[np.ndarray]:
     """One boolean mask per connected component within each color-quantized label (`label_map`
-    as produced by app.v2.color_reduce.reduce_colors; -1 = excluded/transparent). Splitting by
+    as produced by app.quantize.color_reduce.reduce_colors; -1 = excluded/transparent). Splitting by
     connected component — not just by color — means two same-colored but disjoint regions (e.g. a
     shape's two separate highlights) become two segments, not one, which is what lets vectorizing
     them independently produce correctly separated groups."""

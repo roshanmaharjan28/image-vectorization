@@ -37,9 +37,6 @@ interface VectorizerPageProps {
 type OverlayMode = 'none' | 'original' | 'paths';
 
 export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
-  // v1 (raw vtracer call) and v3 (preprocess + vtracer) both expose tunable
-  // vtracer params; v2 doesn't use vtracer at all.
-  const showParams = !apiEndpoint.includes('/v2/');
   const isV3 = apiEndpoint.includes('/v3/');
   const [stage, setStage] = useState<Stage>('empty');
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -88,10 +85,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
-      if (showParams) {
-        appendVectorizeParams(formData, params);
-        formData.append('grouping', grouping);
-      }
+      appendVectorizeParams(formData, params);
+      formData.append('grouping', grouping);
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiUrl}${apiEndpoint}`, { method: 'POST', body: formData });
 
@@ -369,18 +364,14 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             onMoveToGroup={handleMoveToGroup}
             moveUpTargets={moveUpTargets.leafTargets}
           />
-          {showParams && (
-            <>
-              <GroupingSelector value={grouping} onChange={setGrouping} disabled={stage === 'vectorizing'} />
-              <ParamsPanel
-                params={params}
-                onChange={handleParamsChange}
-                onRevectorize={handleVectorize}
-                canRevectorize={Boolean(imageFile)}
-                isVectorizing={stage === 'vectorizing'}
-              />
-            </>
-          )}
+          <GroupingSelector value={grouping} onChange={setGrouping} disabled={stage === 'vectorizing'} />
+          <ParamsPanel
+            params={params}
+            onChange={handleParamsChange}
+            onRevectorize={handleVectorize}
+            canRevectorize={Boolean(imageFile)}
+            isVectorizing={stage === 'vectorizing'}
+          />
         </div>
         <LayersPanel
           layers={layers}

@@ -1,11 +1,11 @@
 import cv2
 import numpy as np
 
-from .params import VectorizeParamsV2
+from .params import QuantizeParams
 
 
 def reduce_colors(
-    bgr: np.ndarray, opaque_mask: np.ndarray, params: VectorizeParamsV2
+    bgr: np.ndarray, opaque_mask: np.ndarray, params: QuantizeParams
 ) -> tuple[np.ndarray, list[tuple[int, int, int]]]:
     """Returns (label_map, palette). label_map is HxW int32, -1 for pixels
     excluded by opaque_mask. palette[i] is the BGR color for label i, ordered

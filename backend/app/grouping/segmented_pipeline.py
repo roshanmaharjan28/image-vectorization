@@ -5,9 +5,9 @@ import logging
 import cv2
 import numpy as np
 
-from app.v2.color_reduce import reduce_colors
-from app.v2.params import VectorizeParamsV2
-from app.v2.preprocess import decode_image, preprocess
+from app.quantize.color_reduce import reduce_colors
+from app.quantize.params import QuantizeParams
+from app.quantize.preprocess import decode_image, preprocess
 
 from . import fastsam_segment, opencv_segment
 from .containment import IdAllocator, SegmentSpan, build_segment_forest
@@ -117,7 +117,7 @@ def _quantize_for_segmentation(rgba: np.ndarray) -> np.ndarray:
     what actually gets vectorized) this runs v2's preprocessing+posterization on a disposable
     copy purely to derive discrete color regions, then resizes the resulting labels back to the
     original resolution so they align with the raw image v1 vectorizes."""
-    params = VectorizeParamsV2()
+    params = QuantizeParams()
     bgr, opaque_mask, scale = preprocess(rgba, params)
     label_map, _palette = reduce_colors(bgr, opaque_mask, params)
     if scale != 1.0:

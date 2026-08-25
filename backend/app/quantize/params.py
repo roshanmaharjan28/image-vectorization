@@ -2,9 +2,10 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class VectorizeParamsV2:
-    """Tunable defaults for the v2 pipeline. No tuning UI yet - these are hardcoded
-    entry points a future request-driven config could override without a rewrite."""
+class QuantizeParams:
+    """Tunable defaults for the shared preprocess/color-reduce quantization step used by v3
+    and by v1's opencv grouping mode. No tuning UI yet - these are hardcoded entry points a
+    future request-driven config could override without a rewrite."""
 
     max_dimension: int = 1600
     min_dimension: int = 64

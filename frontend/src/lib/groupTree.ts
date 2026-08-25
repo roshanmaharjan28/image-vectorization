@@ -138,8 +138,8 @@ export function collectGroupIds(nodes: TreeNode[]): string[] {
 }
 
 /** Projects a (tree, layers, collapse-state) triple into the flat, virtualizable row list the
- *  layers panel renders. When `tree` is null (grouping off, or a pipeline — v2 — that never
- *  returns groups), this degrades to exactly today's `layers.filter(!deleted).reverse()` list:
+ *  layers panel renders. When `tree` is null (grouping off, or a request that never returns
+ *  groups), this degrades to exactly today's `layers.filter(!deleted).reverse()` list:
  *  the backward-compatibility guarantee is structural, not incidental. */
 export function buildPanelRows(
   tree: TreeNode[] | null,

@@ -57,11 +57,3 @@ def test_grouping_none_omits_groups_key_value(path: str):
     body = res.json()
     assert body.get("groups") is None
     assert "data-region-index=" not in body["svg"]
-
-
-def test_v2_is_unaffected_by_grouping():
-    files = {"image": ("fixture.png", _fixture_png_bytes(), "image/png")}
-    res = client.post("/api/v2/vectorize", files=files, data={"grouping": "opencv"})
-    assert res.status_code == 200
-    body = res.json()
-    assert set(body.keys()) == {"svg"}

@@ -39,8 +39,7 @@ export interface GroupNode {
 export type TreeNode = LeafRef | GroupNode;
 
 // 'none' skips grouping entirely (default, byte-identical to pre-grouping behavior); 'opencv' and
-// 'fastsam' select which backend engine computes the `groups` forest. Only meaningful for v1/v3 —
-// v2 has no grouping support (see backend/app/grouping's README-equivalent in the plan doc).
+// 'fastsam' select which backend engine computes the `groups` forest.
 export type GroupingMode = 'none' | 'opencv' | 'fastsam';
 
 // 'cursor' interacts with canvas elements (select/move/scale/rotate/path-edit); 'hand' only pans

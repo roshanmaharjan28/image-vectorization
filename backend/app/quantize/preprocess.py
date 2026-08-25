@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-from .params import VectorizeParamsV2
+from .params import QuantizeParams
 
 
 def decode_image(raw: bytes) -> np.ndarray:
@@ -18,7 +18,7 @@ def decode_image(raw: bytes) -> np.ndarray:
     return np.array(img.convert("RGBA"), dtype=np.uint8)
 
 
-def preprocess(rgba: np.ndarray, params: VectorizeParamsV2) -> tuple[np.ndarray, np.ndarray, float]:
+def preprocess(rgba: np.ndarray, params: QuantizeParams) -> tuple[np.ndarray, np.ndarray, float]:
     """Returns (bgr, opaque_mask, scale) at processing resolution.
 
     scale = processing_dim / original_dim; callers divide fitted coordinates by
