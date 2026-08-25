@@ -178,3 +178,115 @@ export function buildPanelRows(
   flattenClean(cleaned, 0, collapsedGroupIds, displayNumberByIndex, layers, rows);
   return rows;
 }
+
+// Manually-created groups only ever need an id unique within this session's tree — no relation to
+// (and no risk of colliding with) whatever id scheme the backend's FastSAM/OpenCV pass used.
+let nextManualGroupId = 0;
+
+function collectLeafIndices(node: TreeNode): number[] {
+  return node.type === 'leaf' ? [node.index] : node.children.flatMap(collectLeafIndices);
+}
+
+// Pulls every selected leaf out of `nodes` (recursively). A group that's only *partially*
+// selected survives with its unselected children, and its selected children are hoisted
+// individually into `extracted`. A group that's *fully* selected is hoisted as a single unit
+// (unchanged), so grouping a whole existing group together with something else nests it rather
+// than flattening it away.
+function extractSelected(
+  nodes: TreeNode[],
+  selected: Set<number>,
+): { remaining: TreeNode[]; extracted: TreeNode[] } {
+  const remaining: TreeNode[] = [];
+  const extracted: TreeNode[] = [];
+  for (const node of nodes) {
+    if (node.type === 'leaf') {
+      (selected.has(node.index) ? extracted : remaining).push(node);
+      continue;
+    }
+    const child = extractSelected(node.children, selected);
+    if (child.extracted.length === 0) {
+      remaining.push(node);
+    } else if (child.remaining.length === 0) {
+      extracted.push(node);
+    } else {
+      remaining.push({ ...node, children: child.remaining });
+      extracted.push(...child.extracted);
+    }
+  }
+  return { remaining, extracted };
+}
+
+/** Wraps every selected layer (and any wholly-selected existing group) into one new group at the
+ *  root of the tree. Returns null if fewer than two distinct selection units end up inside it —
+ *  either the caller passed in under two layers, or the selection was exactly one pre-existing
+ *  whole group, in which case there's nothing new to group. */
+export function groupSelectedLeaves(
+  tree: TreeNode[] | null,
+  layers: Layer[],
+  selectedLayerIds: string[],
+): { tree: TreeNode[]; groupId: string } | null {
+  const idToIndex = new Map(layers.map((layer, index) => [layer.id, index]));
+  const selected = new Set<number>();
+  for (const id of selectedLayerIds) {
+    const index = idToIndex.get(id);
+    if (index !== undefined && !layers[index].deleted) selected.add(index);
+  }
+  if (selected.size < 2) return null;
+
+  const workingTree = tree ?? layers.map((_, index) => ({ type: 'leaf' as const, index }));
+  const { remaining, extracted } = extractSelected(workingTree, selected);
+  if (extracted.length < 2) return null;
+
+  const groupId = `manual-group-${nextManualGroupId++}`;
+  const newGroup: GroupNode = { type: 'group', id: groupId, label: null, children: extracted };
+  return { tree: [...remaining, newGroup], groupId };
+}
+
+// Dissolves every group in `nodes` whose entire leaf membership is selected, splicing its
+// children into its former parent in its place. Only one nesting level disappears per matching
+// group — a nested subgroup that isn't itself fully selected is left intact.
+function ungroupIn(nodes: TreeNode[], selected: Set<number>): { nodes: TreeNode[]; changed: boolean } {
+  const result: TreeNode[] = [];
+  let changed = false;
+  for (const node of nodes) {
+    if (node.type === 'leaf') {
+      result.push(node);
+      continue;
+    }
+    const leafIndices = collectLeafIndices(node);
+    const fullySelected = leafIndices.length > 0 && leafIndices.every((index) => selected.has(index));
+    if (fullySelected) {
+      result.push(...node.children);
+      changed = true;
+      continue;
+    }
+    const child = ungroupIn(node.children, selected);
+    if (child.changed) {
+      result.push({ ...node, children: child.nodes });
+      changed = true;
+    } else {
+      result.push(node);
+    }
+  }
+  return { nodes: result, changed };
+}
+
+/** Dissolves whichever selected group(s) are fully covered by the current selection. Returns null
+ *  if nothing in the tree qualifies (e.g. the selection doesn't fully cover any single group). */
+export function ungroupSelectedLeaves(
+  tree: TreeNode[] | null,
+  layers: Layer[],
+  selectedLayerIds: string[],
+): TreeNode[] | null {
+  if (!tree) return null;
+  const idToIndex = new Map(layers.map((layer, index) => [layer.id, index]));
+  const selected = new Set<number>();
+  for (const id of selectedLayerIds) {
+    const index = idToIndex.get(id);
+    if (index !== undefined) selected.add(index);
+  }
+  if (selected.size === 0) return null;
+
+  const { nodes, changed } = ungroupIn(tree, selected);
+  return changed ? nodes : null;
+}

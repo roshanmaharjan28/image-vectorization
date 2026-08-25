@@ -10,7 +10,7 @@ import { LayersPanel } from '../components/LayersPanel';
 import { ParamsPanel } from '../components/ParamsPanel';
 import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
-import { collectGroupIds } from '../lib/groupTree';
+import { collectGroupIds, groupSelectedLeaves, ungroupSelectedLeaves } from '../lib/groupTree';
 import { buildGroupSvgString, buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
 import { downloadTextFile } from '../lib/download';
@@ -191,6 +191,45 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     });
   }, []);
 
+  // Wraps the current selection in a new group (Ctrl/Cmd+G or the panel's Group button). A no-op
+  // (with a toast) when the selection doesn't amount to at least two distinct groupable units.
+  const handleGroupSelected = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    const result = groupSelectedLeaves(groupTree, layers, selectedLayerIds);
+    if (!result) {
+      toast.error('Select at least 2 layers to group');
+      return;
+    }
+    setGroupTree(result.tree);
+  }, [groupTree, layers, selectedLayerIds]);
+
+  // Dissolves whichever selected group(s) are fully covered by the selection (Ctrl/Cmd+Shift+G or
+  // the panel's Ungroup button).
+  const handleUngroupSelected = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    const next = ungroupSelectedLeaves(groupTree, layers, selectedLayerIds);
+    if (!next) {
+      toast.error('Select a group to ungroup');
+      return;
+    }
+    setGroupTree(next);
+  }, [groupTree, layers, selectedLayerIds]);
+
+  // Ctrl/Cmd+G groups the selection, Ctrl/Cmd+Shift+G ungroups it — same convention as
+  // Illustrator/Figma/Sketch. Skipped while a text field has focus, same guard as Delete below.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key.toLowerCase() !== 'g' || !(e.ctrlKey || e.metaKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      e.preventDefault();
+      if (e.shiftKey) handleUngroupSelected();
+      else handleGroupSelected();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleGroupSelected, handleUngroupSelected]);
+
   const handleRenameGroup = useCallback((id: string, label: string) => {
     setGroupTree((prev) => {
       if (!prev) return prev;
@@ -302,6 +341,8 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
           onChangeColor={handleChangeColor}
           onToggleGroupCollapsed={handleToggleGroupCollapsed}
           onRenameGroup={handleRenameGroup}
+          onGroupSelected={handleGroupSelected}
+          onUngroupSelected={handleUngroupSelected}
           onSetVisibleMany={handleSetVisibleMany}
           onDeleteMany={handleDeleteMany}
           onDownloadGroup={handleDownloadGroup}

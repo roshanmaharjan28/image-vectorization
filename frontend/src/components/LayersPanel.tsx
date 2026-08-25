@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Group, Ungroup } from 'lucide-react';
 import type { Layer, SvgMeta, TreeNode } from '../types';
 import { buildPanelRows, idsForRow } from '../lib/groupTree';
 import { LayerRow } from './LayerRow';
 import { GroupRow } from './GroupRow';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
 interface Props {
   layers: Layer[];
@@ -26,6 +28,8 @@ interface Props {
   onDeleteMany: (ids: string[]) => void;
   onDownloadGroup: (leafIds: string[], label: string) => void;
   onRenameGroup: (id: string, label: string) => void;
+  onGroupSelected: () => void;
+  onUngroupSelected: () => void;
 }
 
 // Must match the rendered height of both LayerRow.tsx and GroupRow.tsx.
@@ -53,6 +57,8 @@ export function LayersPanel({
   onDeleteMany,
   onDownloadGroup,
   onRenameGroup,
+  onGroupSelected,
+  onUngroupSelected,
 }: Props) {
   const rows = useMemo(
     () => buildPanelRows(groupTree, layers, collapsedGroupIds),
@@ -202,7 +208,31 @@ export function LayersPanel({
       />
       <div className="flex items-center justify-between border-b border-border px-4 py-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         <span>Layers</span>
-        <Badge variant="secondary">{totalLayerCount}</Badge>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground hover:text-foreground"
+            title="Group selection (Ctrl+G)"
+            disabled={selectedLayerIds.length < 2}
+            onClick={onGroupSelected}
+          >
+            <Group />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground hover:text-foreground"
+            title="Ungroup selection (Ctrl+Shift+G)"
+            disabled={selectedLayerIds.length === 0}
+            onClick={onUngroupSelected}
+          >
+            <Ungroup />
+          </Button>
+          <Badge variant="secondary">{totalLayerCount}</Badge>
+        </div>
       </div>
       <div className="relative flex-1 overflow-y-auto" ref={listRef}>
         {rows.length === 0 && (
