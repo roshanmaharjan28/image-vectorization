@@ -125,6 +125,18 @@ function flattenClean(
   }
 }
 
+/** All group ids in the tree, recursively — used to seed "everything collapsed" as the default
+ *  panel state right after a vectorize, since `collapsedGroupIds` is empty-set-means-expanded. */
+export function collectGroupIds(nodes: TreeNode[]): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    if (node.type === 'leaf') continue;
+    ids.push(node.id);
+    ids.push(...collectGroupIds(node.children));
+  }
+  return ids;
+}
+
 /** Projects a (tree, layers, collapse-state) triple into the flat, virtualizable row list the
  *  layers panel renders. When `tree` is null (grouping off, or a pipeline — v2 — that never
  *  returns groups), this degrades to exactly today's `layers.filter(!deleted).reverse()` list:

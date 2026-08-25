@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 import numpy as np
-from fastapi import HTTPException
 
-from .exceptions import GroupingUnavailableError
 from .schema import GroupingMode, serialize_groups
 from .segmented_pipeline import build_grouped_svg
 
@@ -28,10 +26,7 @@ def finalize_vectorize_response(
         return {"svg": plain_vectorize(), "groups": None}
 
     quantized_source = quantized_source_provider() if quantized_source_provider else None
-    try:
-        result = build_grouped_svg(image_bytes, grouping, vtracer_kwargs, quantized_source=quantized_source)
-    except GroupingUnavailableError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    result = build_grouped_svg(image_bytes, grouping, vtracer_kwargs, quantized_source=quantized_source)
 
     if result is None:
         return {"svg": plain_vectorize(), "groups": None}

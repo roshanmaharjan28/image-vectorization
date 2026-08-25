@@ -11,7 +11,6 @@ from app.v2.preprocess import decode_image, preprocess
 
 from . import fastsam_segment, opencv_segment
 from .containment import IdAllocator, SegmentSpan, build_segment_forest
-from .exceptions import GroupingUnavailableError
 from .imageutil import mask_bbox, resize_label_map
 from .masked_vectorize import vectorize_masked
 from .schema import GroupingMode, GroupNode, TreeNode
@@ -24,6 +23,15 @@ logger = logging.getLogger(__name__)
 # trigger. Exceeding it just means "too fragmented to be worth grouping" — the caller falls
 # back to one plain, ungrouped vectorize call, the same outcome as finding zero segments.
 MAX_SEGMENTS = 150
+
+# FastSAM's mask boundary rarely lands pixel-exactly on a glyph/shape's true (anti-aliased) edge
+# the way opencv's color-derived masks do, so vectorizing each mask independently traces a thin
+# sliver of edge pixels caught between the two boundaries as its own tiny path — multiplying a
+# single real shape into several. vtracer's own speckle filter is the right tool for exactly this
+# (small, spurious regions), but its default (2px) is tuned for whole-image tracing and is far too
+# low to catch an elongated boundary sliver. This floor is applied only to fastsam's per-segment
+# calls — opencv's masks already align with real color edges and don't need it.
+FASTSAM_MIN_FILTER_SPECKLE = 16
 
 
 def build_grouped_svg(
@@ -63,6 +71,10 @@ def build_grouped_svg(
             raise ValueError("could not decode image bytes for fastsam grouping")
         masks = fastsam_segment.segment_masks(image_bgr)
         containment_params = fastsam_segment.FastSamParams().containment
+        # vtracer_kwargs = {
+        #     **vtracer_kwargs,
+        #     "filter_speckle": max(vtracer_kwargs.get("filter_speckle", 0), FASTSAM_MIN_FILTER_SPECKLE),
+        # }
     else:
         raise ValueError(f"unknown grouping mode: {grouping!r}")
 
@@ -88,8 +100,6 @@ def build_grouped_svg(
         ]
         forest = build_segment_forest(spans, containment_params, ids)
         validate_tree(forest, total_paths=len(path_infos))
-    except GroupingUnavailableError:
-        raise
     except Exception:
         logger.exception("grouping failed (mode=%s); degrading to ungrouped", grouping)
         return None

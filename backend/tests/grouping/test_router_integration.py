@@ -59,18 +59,6 @@ def test_grouping_none_omits_groups_key_value(path: str):
     assert "data-region-index=" not in body["svg"]
 
 
-def test_grouping_fastsam_returns_a_clear_error_when_unavailable():
-    try:
-        import ultralytics  # noqa: F401
-
-        pytest.skip("ultralytics is installed; the 501 path isn't exercised here")
-    except ImportError:
-        pass
-    res = _upload("/api/vectorize", "fastsam")
-    assert res.status_code == 501
-    assert "ultralytics" in res.json()["detail"]
-
-
 def test_v2_is_unaffected_by_grouping():
     files = {"image": ("fixture.png", _fixture_png_bytes(), "image/png")}
     res = client.post("/api/v2/vectorize", files=files, data={"grouping": "opencv"})

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Layer, SvgMeta, TreeNode } from '../types';
 import { buildPanelRows, idsForRow } from '../lib/groupTree';
@@ -31,6 +31,10 @@ interface Props {
 const ROW_HEIGHT = 45;
 const OVERSCAN = 6;
 
+const DEFAULT_PANEL_WIDTH = 260; // matches the old fixed `w-65`
+const MIN_PANEL_WIDTH = 220;
+const MAX_PANEL_WIDTH = 480;
+
 export function LayersPanel({
   layers,
   meta,
@@ -59,10 +63,15 @@ export function LayersPanel({
   // reset) by subsequent shift-clicks so repeated shift-clicks keep growing the same range,
   // matching standard file-list selection behavior.
   const lastSelectedIndexRef = useRef<number | null>(null);
+  // A row clicked inside this panel is by definition already visible, so the scroll-into-view
+  // effect below (which exists for selections driven from *outside* the panel, e.g. clicking a
+  // layer on the canvas) should skip the next selectedLayerIds change it sees.
+  const skipNextScrollRef = useRef(false);
 
   function handleRowClick(rowIndex: number, e: ReactMouseEvent) {
     const row = rows[rowIndex];
     if (!row) return;
+    skipNextScrollRef.current = true;
     if (e.shiftKey && lastSelectedIndexRef.current !== null) {
       const anchor = lastSelectedIndexRef.current;
       const [start, end] = anchor < rowIndex ? [anchor, rowIndex] : [rowIndex, anchor];
@@ -75,6 +84,30 @@ export function LayersPanel({
     } else {
       onSelectLayer(idsForRow(row), 'replace');
     }
+  }
+
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  // Drag-resize via pointer capture rather than document-level listeners — the handle keeps
+  // receiving move/up events even once the cursor leaves it, without needing an effect teardown.
+  const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null);
+
+  function handleResizeStart(e: ReactPointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    resizeStartRef.current = { pointerX: e.clientX, width: panelWidth };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handleResizeMove(e: ReactPointerEvent<HTMLDivElement>) {
+    const start = resizeStartRef.current;
+    if (!start) return;
+    // Panel is docked on the right, so dragging left (negative clientX delta) should grow it.
+    const nextWidth = start.width + (start.pointerX - e.clientX);
+    setPanelWidth(Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, nextWidth)));
+  }
+
+  function handleResizeEnd(e: ReactPointerEvent<HTMLDivElement>) {
+    resizeStartRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -92,17 +125,33 @@ export function LayersPanel({
   });
 
   useEffect(() => {
+    if (skipNextScrollRef.current) {
+      skipNextScrollRef.current = false;
+      return;
+    }
     const lastId = selectedLayerIds[selectedLayerIds.length - 1];
     if (!lastId) return;
     const idx = rows.findIndex((row) => (row.kind === 'layer' ? row.layer.id === lastId : row.leafIds.includes(lastId)));
     if (idx === -1) return;
-    virtualizer.scrollToIndex(idx);
+    virtualizer.scrollToIndex(idx, { align: 'auto' });
   }, [selectedLayerIds, rows, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <aside className="flex w-65 shrink-0 flex-col border-l border-border bg-card">
+    <aside
+      className="relative flex shrink-0 flex-col border-l border-border bg-card"
+      style={{ width: panelWidth }}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize layers panel"
+        onPointerDown={handleResizeStart}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        className="absolute top-0 -left-0.5 z-10 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/40 active:bg-primary/60"
+      />
       <div className="flex items-center justify-between border-b border-border px-4 py-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         <span>Layers</span>
         <Badge variant="secondary">{totalLayerCount}</Badge>
