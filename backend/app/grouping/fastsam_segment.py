@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+from ultralytics import FastSAM
 
 from .containment import ContainmentParams, find_parents
-from .exceptions import GroupingUnavailableError
 from .imageutil import mask_bbox
 
 
@@ -34,14 +34,6 @@ def segment_masks(image_bgr: np.ndarray, params: FastSamParams = FastSamParams()
     boolean mask at the image's own resolution (retina_masks=True upsamples internally, so no
     extra resize step is needed to align a mask with the original-resolution canvas), plus one
     extra mask for whatever pixels no instance covers (see `_resolve_overlaps_and_background`)."""
-    try:
-        from ultralytics import FastSAM
-    except ImportError as exc:
-        raise GroupingUnavailableError(
-            "fastsam grouping requires the 'ultralytics' package (and torch) to be installed "
-            "(pip install -r requirements-fastsam.txt)"
-        ) from exc
-
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     model = FastSAM(params.weights)
     results = model(

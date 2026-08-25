@@ -1,5 +1,6 @@
 import type { Layer, SvgMeta } from '../types';
-import { isIdentityMatrix } from './svgTransform';
+import { flattenPathToContours } from './pathFlatten';
+import { applyTransform, isIdentityMatrix, parseTransform } from './svgTransform';
 
 function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
@@ -68,4 +69,52 @@ export function buildSvgString(meta: SvgMeta, layers: Layer[]): string {
     paths,
     '</svg>',
   ].join('\n');
+}
+
+/** Tight bounding box, in final rendered (viewBox) space, of a set of layers' painted geometry —
+ *  i.e. after both each layer's original `transform` attribute and its editable gizmo transform
+ *  are applied. Returns null if none of the layers have any paintable geometry. */
+function computeLayersBBox(layers: Layer[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const layer of layers) {
+    if (!layer.visible || layer.deleted || !layer.attrs.d) continue;
+    try {
+      const matrix = parseTransform(composedTransformAttr(layer));
+      for (const contour of flattenPathToContours(layer.attrs.d)) {
+        for (const [x, y] of contour) {
+          const [tx, ty] = applyTransform(matrix, x, y);
+          if (tx < minX) minX = tx;
+          if (tx > maxX) maxX = tx;
+          if (ty < minY) minY = ty;
+          if (ty > maxY) maxY = ty;
+        }
+      }
+    } catch {
+      // Skip paths the DOM can't parse rather than failing the whole export.
+    }
+  }
+  return minX > maxX || minY > maxY ? null : { minX, minY, maxX, maxY };
+}
+
+/**
+ * Same as buildSvgString, but crops the document down to the tight bounding box of `layers`
+ * instead of using the full original canvas — so downloading a group produces just that group,
+ * positioned at its own origin, rather than the whole original artwork's dimensions with
+ * everything but the group left blank. Falls back to `fallbackMeta` (the full canvas) if the
+ * layers have no measurable geometry (e.g. an empty group).
+ */
+export function buildGroupSvgString(layers: Layer[], fallbackMeta: SvgMeta): string {
+  const bbox = computeLayersBBox(layers);
+  if (!bbox) return buildSvgString(fallbackMeta, layers);
+  const width = bbox.maxX - bbox.minX;
+  const height = bbox.maxY - bbox.minY;
+  const meta: SvgMeta = {
+    width: String(width),
+    height: String(height),
+    viewBox: `${bbox.minX} ${bbox.minY} ${width} ${height}`,
+  };
+  return buildSvgString(meta, layers);
 }

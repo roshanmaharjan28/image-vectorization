@@ -11,7 +11,7 @@ import { ParamsPanel } from '../components/ParamsPanel';
 import { GroupingSelector } from '../components/GroupingSelector';
 import { parseSvgToLayers } from '../lib/svgParse';
 import { collectGroupIds } from '../lib/groupTree';
-import { buildSvgString, setLayerFill } from '../lib/svgSerialize';
+import { buildGroupSvgString, buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, DEFAULT_V1_PARAMS, DEFAULT_V3_PARAMS } from '../lib/vectorizeParams';
 import { downloadTextFile } from '../lib/download';
 import type { GroupingMode, Layer, Stage, SvgMeta, Tool, TreeNode, VectorizeParams } from '../types';
@@ -185,7 +185,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       if (!meta) return;
       const idSet = new Set(leafIds);
       const subset = layers.filter((l) => idSet.has(l.id));
-      const svgString = buildSvgString(meta, subset);
+      const svgString = buildGroupSvgString(subset, meta);
       downloadTextFile(svgString, `${label.replace(/[^\w-]+/g, '_') || 'group'}.svg`);
     },
     [meta, layers],

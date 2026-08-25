@@ -11,7 +11,6 @@ from app.v2.preprocess import decode_image, preprocess
 
 from . import fastsam_segment, opencv_segment
 from .containment import IdAllocator, SegmentSpan, build_segment_forest
-from .exceptions import GroupingUnavailableError
 from .imageutil import mask_bbox, resize_label_map
 from .masked_vectorize import vectorize_masked
 from .schema import GroupingMode, GroupNode, TreeNode
@@ -101,8 +100,6 @@ def build_grouped_svg(
         ]
         forest = build_segment_forest(spans, containment_params, ids)
         validate_tree(forest, total_paths=len(path_infos))
-    except GroupingUnavailableError:
-        raise
     except Exception:
         logger.exception("grouping failed (mode=%s); degrading to ungrouped", grouping)
         return None

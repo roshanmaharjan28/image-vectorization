@@ -1,3 +1,0 @@
-# Optional — only needed for `grouping=fastsam`. The base app (grouping=none/opencv) never
-# imports this; install it only if you want the FastSAM grouping engine available.
-ultralytics
