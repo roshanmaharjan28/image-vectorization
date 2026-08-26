@@ -106,6 +106,15 @@ Flow in `pages/VectorizerPage.tsx` (the only page, parameterized by `apiEndpoint
 3. All further editing (visibility, delete, recolor, move/scale/rotate, node/path editing) mutates that `Layer[]` in React state — never re-parses the SVG.
 4. `lib/svgSerialize.ts` turns `SvgMeta` + `Layer[]` back into an SVG string for download.
 
+**Undo/redo**: the editable document isn't plain `useState` — `hooks/useDocumentHistory.ts` holds `layers` + `groupTree` + `selectedLayerIds` as one snapshot behind past/present/future stacks (Ctrl/Cmd+Z, Ctrl+Y or Ctrl/Cmd+Shift+Z), and hands `VectorizerPage` setters shaped exactly like the `useState` ones it replaced. What it records is the interesting part:
+
+- `setLayers`/`setGroupTree` each record a step; `setSelectedLayerIds` records none. A snapshot still *carries* the selection, so undoing a delete re-selects what came back.
+- A gizmo or path-anchor drag calls its setter once per animation frame, so both interaction hooks bracket the gesture with `onTransformStart`/`onTransformEnd` (→ `beginDrag`/`endDrag`): intermediate frames move `present` without pushing, and the release pushes the pre-drag state once — or nothing at all, if the pointer came back to where it started. Undo is refused while a drag is open, since the step it would discard hasn't been pushed yet.
+- A re-vectorize goes through `resetDocument`, which clears both stacks: layer ids are unique per parse, so an undo across it would restore layers the current GL buffers know nothing about.
+- Undoing a *path edit* is the one case the renderer can't see by itself — `useCanvasGLScene` triangulates per layer set, not per `d` — so the hook counts a `geometryEpoch` whenever an undo/redo swapped in different path geometry, and CanvasGL adds it to its own path-edit counter to force the same re-triangulation a live drag does.
+
+Snapshots are structurally shared (a mutation replaces the `layers` array but keeps almost every `Layer` object), which is what makes a 100-step history affordable on v2's ~9k-path documents. `collapsedGroupIds` is deliberately outside the history — it's view state, not document state.
+
 **Rendering**: `components/CanvasGL.tsx` is the active renderer — a WebGL2 canvas that triangulates every layer's path once per vectorize into a single VBO/IBO (one draw call regardless of layer count), looks up each layer's fill from a palette texture (so toggling visibility is an O(1) texture update), and resolves hover/click via a GPU color-id pick buffer instead of DOM hit-testing. Pan/zoom is a CSS transform on the artboard wrapper, so it never triggers a GL re-render. Move/scale/rotate edits are applied via per-layer GPU transform textures rather than re-triangulating.
 
 `components/Canvas.tsx` is an older SVG/DOM-based renderer kept in the tree but currently unused (swapped out in `VectorizerPage.tsx`) — don't assume it's on the render path.
@@ -128,5 +137,6 @@ CanvasGL itself only wires state together; the real logic is split across:
 ### Conventions worth preserving
 
 - Soft-delete: removing a layer sets `deleted: true` + `visible: false` rather than removing it from the array, so the layer list identity is stable and downstream memoization (triangulation, palette texture) doesn't have to rebuild.
+- Document mutations go through `useDocumentHistory`'s setters rather than local `useState`, so every new edit action is undoable by construction; a new streaming (per-frame) edit only has to bracket itself with `beginDrag`/`endDrag`.
 - `OverlayMode` in `VectorizerPage.tsx` (`'none' | 'original' | 'paths'`) is likewise one value instead of two booleans, since "show original" and "show paths outline" are mutually exclusive overlays.
 - Backend param dataclasses are frozen and versioned per pipeline (`VectorizeParamsV2`, `VectorizeParamsV3`) rather than shared/mutated, so tuning one stage can't silently affect another.

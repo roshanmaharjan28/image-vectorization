@@ -21,6 +21,7 @@ import {
 } from '../lib/groupTree';
 import { buildGroupSvgString, buildSvgString, setLayerFill } from '../lib/svgSerialize';
 import { appendVectorizeParams, defaultParamsFor, fetchV2Presets } from '../lib/vectorizeParams';
+import { EMPTY_DOCUMENT, useDocumentHistory } from '../hooks/useDocumentHistory';
 import { downloadTextFile } from '../lib/download';
 import type { GroupingMode, Layer, Stage, SvgMeta, Tool, TreeNode, V2PresetInfo, VectorizeParams } from '../types';
 import '../App.css';
@@ -36,17 +37,40 @@ interface VectorizerPageProps {
 // one on can't leave the other on too.
 type OverlayMode = 'none' | 'original' | 'paths';
 
+// Every window-level shortcut below (delete, group, undo/redo) ignores keystrokes aimed at a text
+// field, so editing a group name or a color hex doesn't also drive the canvas — and so Ctrl+Z in
+// one of those inputs stays the browser's own text undo instead of rewinding the document.
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+}
+
 export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   const [stage, setStage] = useState<Stage>('empty');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<SvgMeta | null>(null);
-  const [layers, setLayers] = useState<Layer[]>([]);
-  const [groupTree, setGroupTree] = useState<TreeNode[] | null>(null);
+  // The editable document — layers, the group forest, and the selection — lives behind an
+  // undo/redo stack instead of plain useState: setLayers/setGroupTree each record a step,
+  // setSelectedLayerIds records none, and a canvas drag is bracketed by beginDrag/endDrag so its
+  // per-frame updates collapse into a single step. See useDocumentHistory.
+  const {
+    layers,
+    groupTree,
+    selectedLayerIds,
+    geometryEpoch,
+    setLayers,
+    setGroupTree,
+    setSelectedLayerIds,
+    resetDocument,
+    beginDrag,
+    endDrag,
+    undo,
+    redo,
+  } = useDocumentHistory();
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
   const [grouping, setGrouping] = useState<GroupingMode>('none');
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
-  const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   // Per-pipeline defaults: each endpoint's Form defaults differ, and only v2 carries the `v2`
   // sub-object of pre/post-processing params (whose presence is what makes ParamsPanel show them).
   const [params, setParams] = useState<VectorizeParams>(() => defaultParamsFor(apiEndpoint));
@@ -93,8 +117,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageFile(file);
     setImageUrl(URL.createObjectURL(file));
     setMeta(null);
-    setLayers([]);
-    setGroupTree(null);
+    resetDocument(EMPTY_DOCUMENT);
     setCollapsedGroupIds(new Set());
     setOverlayMode('none');
     setStage('has-image');
@@ -121,8 +144,10 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       const data: { svg: string; groups?: TreeNode[] | null } = await res.json();
       const parsed = parseSvgToLayers(data.svg);
       setMeta(parsed.meta);
-      setLayers(parsed.layers);
-      setGroupTree(data.groups ?? null);
+      // A fresh trace replaces the document rather than editing it, so it starts a new history
+      // instead of becoming an undoable step: layer ids are unique per parse, so an undo across a
+      // re-vectorize would restore layers the current geometry buffers know nothing about.
+      resetDocument({ layers: parsed.layers, groupTree: data.groups ?? null, selectedLayerIds: [] });
       // Groups start collapsed rather than expanded, so a freshly vectorized image opens on the
       // grouped overview instead of one giant flat/expanded layer list.
       setCollapsedGroupIds(data.groups ? new Set(collectGroupIds(data.groups)) : new Set());
@@ -148,7 +173,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       }
       return Array.from(next);
     });
-  }, []);
+  }, [setSelectedLayerIds]);
 
   // Recolors every selected layer at once when the edited swatch belongs to a multi-layer
   // selection, otherwise just the one layer whose swatch was clicked.
@@ -159,25 +184,25 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
         return prev.map((layer) => (targets.has(layer.id) ? setLayerFill(layer, hex) : layer));
       });
     },
-    [selectedLayerIds],
+    [selectedLayerIds, setLayers],
   );
 
   // Full-array replace from CanvasGL's gizmo drag (move/scale/rotate) — same shape as any other
   // layer edit, so it flows through the existing per-layer diff effects in CanvasGL.
   const handleTransformLayers = useCallback((next: Layer[]) => {
     setLayers(next);
-  }, []);
+  }, [setLayers]);
 
   const handleToggleVisible = useCallback((id: string) => {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
-  }, []);
+  }, [setLayers]);
 
   // Soft-delete: flips a flag instead of shrinking the array, so it's exactly
   // as cheap as toggling visibility and never forces Canvas to rebuild its
   // path list (see Canvas.tsx's pathsMarkup memo).
   const handleDeleteLayer = useCallback((id: string) => {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: false, deleted: true } : l)));
-  }, []);
+  }, [setLayers]);
 
   // Batch versions of the two setters above, used by a group row's eye/trash actions (which
   // cascade to every descendant leaf, nested subgroups included) — also reusable unchanged by a
@@ -187,14 +212,14 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       const idSet = new Set(ids);
       return prev.map((l) => (idSet.has(l.id) ? { ...l, visible } : l));
     });
-  }, []);
+  }, [setLayers]);
 
   const handleDeleteMany = useCallback((ids: string[]) => {
     setLayers((prev) => {
       const idSet = new Set(ids);
       return prev.map((l) => (idSet.has(l.id) ? { ...l, visible: false, deleted: true } : l));
     });
-  }, []);
+  }, [setLayers]);
 
   // Lets the Delete/Backspace key do the same thing as the trash icon for whatever's currently
   // selected. Skipped while a text field (group rename, color hex, etc.) has focus, so deleting a
@@ -203,15 +228,14 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       if (selectedLayerIds.length === 0) return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (isTextEntryTarget(e.target)) return;
       e.preventDefault();
       handleDeleteMany(selectedLayerIds);
       setSelectedLayerIds([]);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedLayerIds, handleDeleteMany]);
+  }, [selectedLayerIds, handleDeleteMany, setSelectedLayerIds]);
 
   const handleToggleGroupCollapsed = useCallback((id: string) => {
     setCollapsedGroupIds((prev) => {
@@ -232,7 +256,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       return;
     }
     setGroupTree(result.tree);
-  }, [groupTree, layers, selectedLayerIds]);
+  }, [groupTree, layers, selectedLayerIds, setGroupTree]);
 
   // Dissolves whichever selected group(s) are fully covered by the selection (Ctrl/Cmd+Shift+G or
   // the panel's Ungroup button).
@@ -244,7 +268,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       return;
     }
     setGroupTree(next);
-  }, [groupTree, layers, selectedLayerIds]);
+  }, [groupTree, layers, selectedLayerIds, setGroupTree]);
 
   // Dissolves one specific group regardless of the current selection — used by a group row's
   // "Ungroup" context menu action, as opposed to handleUngroupSelected above (Ctrl+Shift+G/panel
@@ -254,7 +278,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       const next = ungroupGroupById(groupTree, groupId);
       if (next) setGroupTree(next);
     },
-    [groupTree],
+    [groupTree, setGroupTree],
   );
 
   // "Move to" context menu action — moves a layer or whole group into an existing target group,
@@ -264,7 +288,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       const next = moveLeavesToGroup(groupTree, layers, leafIds, targetGroupId);
       if (next) setGroupTree(next);
     },
-    [groupTree, layers],
+    [groupTree, layers, setGroupTree],
   );
 
   // "Edit path" context menu action (panel or canvas) always switches to the cursor tool first —
@@ -284,8 +308,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key.toLowerCase() !== 'g' || !(e.ctrlKey || e.metaKey)) return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (isTextEntryTarget(e.target)) return;
       e.preventDefault();
       if (e.shiftKey) handleUngroupSelected();
       else handleGroupSelected();
@@ -293,6 +316,22 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleGroupSelected, handleUngroupSelected]);
+
+  // Ctrl/Cmd+Z undoes, Ctrl+Y redoes; Ctrl/Cmd+Shift+Z redoes too, since that's the spelling
+  // Illustrator/Figma use (and the only one on macOS, where Ctrl+Y isn't a redo).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      if (isTextEntryTarget(e.target)) return;
+      e.preventDefault();
+      if (key === 'y' || e.shiftKey) redo();
+      else undo();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undo, redo]);
 
   const handleRenameGroup = useCallback((id: string, label: string) => {
     setGroupTree((prev) => {
@@ -306,7 +345,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
       }
       return renameIn(prev);
     });
-  }, []);
+  }, [setGroupTree]);
 
   function handleDownload() {
     if (!meta) return;
@@ -330,8 +369,7 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
     setImageFile(null);
     setImageUrl(null);
     setMeta(null);
-    setLayers([]);
-    setGroupTree(null);
+    resetDocument(EMPTY_DOCUMENT);
     setCollapsedGroupIds(new Set());
     setOverlayMode('none');
     setStage('empty');
@@ -374,6 +412,9 @@ export function VectorizerPage({ apiEndpoint }: VectorizerPageProps) {
             selectedLayerIds={selectedLayerIds}
             onSelectLayer={handleSelectLayer}
             onTransformLayers={handleTransformLayers}
+            onTransformStart={beginDrag}
+            onTransformEnd={endDrag}
+            geometryEpoch={geometryEpoch}
             showOriginal={showOriginal}
             showPaths={showPaths}
             tool={tool}

@@ -49,6 +49,11 @@ interface Options {
   onSelectLayer: (ids: string[], mode: 'replace' | 'add' | 'toggle') => void;
   onHoverLayer: (id: string | null) => void;
   onTransformLayers: (next: Layer[]) => void;
+  // Called at mousedown/mouseup of a layer-mutating drag (move/scale/rotate) so the undo history
+  // records the gesture as one step rather than one per animation frame. Pan and marquee drags
+  // never call onTransformStart, and onTransformEnd is a no-op when no drag was started.
+  onTransformStart: () => void;
+  onTransformEnd: () => void;
   gizmo: GizmoState | null;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   pickLayerIndexAt: (clientX: number, clientY: number) => number;
@@ -78,6 +83,8 @@ export function useCanvasInteractions({
   onSelectLayer,
   onHoverLayer,
   onTransformLayers,
+  onTransformStart,
+  onTransformEnd,
   gizmo,
   canvasRef,
   pickLayerIndexAt,
@@ -305,6 +312,9 @@ export function useCanvasInteractions({
     marqueeMovedRef.current = false;
     setMarqueeRect(null);
     if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+    // Closes the undo step this drag opened. Unconditional because it's a no-op for the drags
+    // that never opened one (pan, marquee) and for a move/scale/rotate that ended where it began.
+    onTransformEnd();
   }
 
   function snapshotInitialTransforms(): Map<string, Mat2x3> {
@@ -349,6 +359,7 @@ export function useCanvasInteractions({
       if (wrapperRef.current) wrapperRef.current.style.cursor = ROTATE_CURSOR;
     }
     dragModeRef.current = mode;
+    onTransformStart();
   }
 
   function handleCanvasMouseDown(e: ReactMouseEvent<HTMLCanvasElement>) {
@@ -370,6 +381,7 @@ export function useCanvasInteractions({
       pivot: startWorld,
     };
     dragModeRef.current = 'move';
+    onTransformStart();
   }
 
   function handleCanvasMouseMove(e: ReactMouseEvent<HTMLCanvasElement>) {

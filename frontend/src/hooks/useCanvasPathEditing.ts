@@ -10,6 +10,10 @@ interface Options {
   view: ViewTransform | null;
   layers: Layer[];
   onTransformLayers: (next: Layer[]) => void;
+  // Brackets an anchor drag for the undo history, same contract as useCanvasInteractions' gizmo
+  // drags: one step per gesture, not one per animation frame.
+  onTransformStart: () => void;
+  onTransformEnd: () => void;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   pickLayerIndexAt: (clientX: number, clientY: number) => number;
   // Bumps CanvasGL's geometryVersion counter (fed into useCanvasGLScene) on every drag frame — a
@@ -50,7 +54,16 @@ interface DragState {
  * sceneGeometry memo deps to force a re-triangulation (that memo is otherwise keyed on `meta`
  * alone). Same cadence as the gizmo's rAF-throttled redraws, for live feedback while dragging.
  */
-export function useCanvasPathEditing({ view, layers, onTransformLayers, canvasRef, pickLayerIndexAt, onPathEdited }: Options) {
+export function useCanvasPathEditing({
+  view,
+  layers,
+  onTransformLayers,
+  onTransformStart,
+  onTransformEnd,
+  canvasRef,
+  pickLayerIndexAt,
+  onPathEdited,
+}: Options) {
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const rafPending = useRef(false);
@@ -124,6 +137,7 @@ export function useCanvasPathEditing({ view, layers, onTransformLayers, canvasRe
       startAnchorWorld,
       startControlWorlds,
     };
+    onTransformStart();
   }
 
   function applyAnchorDrag(clientX: number, clientY: number) {
@@ -155,6 +169,9 @@ export function useCanvasPathEditing({ view, layers, onTransformLayers, canvasRe
 
   function handleWrapperMouseUp() {
     dragRef.current = null;
+    // Fires on every wrapper mouseup/mouseleave, not just after an anchor drag — closing a step
+    // that was never opened is a no-op (see useDocumentHistory's endDrag).
+    onTransformEnd();
   }
 
   return {

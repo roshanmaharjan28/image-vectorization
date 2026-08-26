@@ -22,6 +22,15 @@ interface Props {
   // Called with a full replacement `layers` array whenever the on-canvas gizmo moves/scales/
   // rotates the current selection — a plain `setLayers`, same shape as any other layer edit.
   onTransformLayers: (next: Layer[]) => void;
+  // Brackets the stream of onTransformLayers calls one drag emits (a gizmo move/scale/rotate or a
+  // path-anchor drag, one per animation frame) so the whole gesture is a single undo step instead
+  // of a few hundred — see useDocumentHistory's beginDrag/endDrag.
+  onTransformStart: () => void;
+  onTransformEnd: () => void;
+  /** Bumped by the parent whenever an undo/redo restored different path geometry. Folded into this
+   *  component's own path-edit counter below, since the scene is otherwise triangulated once per
+   *  layer set and would keep drawing the shape as it was before the undo. */
+  geometryEpoch: number;
   // Adobe Image Trace-style "Preview" checkbox: overlays the original source bitmap on top of
   // the traced result instead of replacing it, so the GL canvas (and its context/geometry) stays
   // mounted and toggling back is instant.
@@ -74,6 +83,9 @@ export function CanvasGL({
   selectedLayerIds,
   onSelectLayer,
   onTransformLayers,
+  onTransformStart,
+  onTransformEnd,
+  geometryEpoch,
   showOriginal,
   showPaths,
   tool,
@@ -96,6 +108,10 @@ export function CanvasGL({
   // owned here (rather than by either hook) since useCanvasGLScene needs it as an input while
   // useCanvasPathEditing needs useCanvasGLScene's canvasRef/pickLayerIndexAt as its own input.
   const [geometryVersion, setGeometryVersion] = useState(0);
+  // Either source of new geometry — a live path-edit drag or an undo/redo that restored a
+  // different `d` — has to force the same re-triangulation, and useCanvasGLScene only cares that
+  // the number changed, so the two counters simply add.
+  const geometryRevision = geometryVersion + geometryEpoch;
 
   const isVectorized = meta !== null;
   const view = meta ? computeViewTransform(meta) : null;
@@ -107,7 +123,7 @@ export function CanvasGL({
     selectedLayerIds,
     showPaths,
     zoom: scale,
-    geometryVersion,
+    geometryVersion: geometryRevision,
   });
 
   const {
@@ -122,6 +138,8 @@ export function CanvasGL({
     view,
     layers,
     onTransformLayers,
+    onTransformStart,
+    onTransformEnd,
     canvasRef,
     pickLayerIndexAt,
     onPathEdited: () => setGeometryVersion((v) => v + 1),
@@ -167,6 +185,8 @@ export function CanvasGL({
     onSelectLayer,
     onHoverLayer,
     onTransformLayers,
+    onTransformStart,
+    onTransformEnd,
     gizmo,
     canvasRef,
     pickLayerIndexAt,
